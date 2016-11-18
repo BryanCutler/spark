@@ -26,6 +26,7 @@ import scala.reflect.runtime.universe.TypeTag
 import scala.util.control.NonFatal
 
 import io.netty.buffer.ArrowBuf
+import org.apache.arrow.flatbuf.Precision
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.file.ArrowWriter
 import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
@@ -2291,6 +2292,14 @@ class Dataset[T] private[sql](
     dt match {
       case IntegerType =>
         new ArrowType.Int(8 * IntegerType.defaultSize, true)
+      case StringType =>
+        ArrowType.Utf8.INSTANCE
+      case DoubleType =>
+        new ArrowType.FloatingPoint(Precision.DOUBLE)
+      case FloatType =>
+        new ArrowType.FloatingPoint(Precision.SINGLE)
+      case BooleanType =>
+        ArrowType.Bool.INSTANCE
       case _ =>
         throw new IllegalArgumentException(s"Unsupported data type")
     }
@@ -2341,7 +2350,18 @@ class Dataset[T] private[sql](
     val buffers = this.schema.fields.zipWithIndex.flatMap { case (field, idx) =>
       val validity = internalRowToValidityMap(rows, idx, field, allocator)
       val buf = allocator.buffer(numOfRows * field.dataType.defaultSize)
-      rows.foreach { row => buf.writeInt(row.getInt(idx)) }
+      field.dataType match {
+        case IntegerType =>
+          rows.foreach { row => buf.writeInt(row.getInt(idx)) }
+        case StringType =>
+          rows.foreach { row => buf.writeByte(row.getByte(idx)) }
+        case DoubleType =>
+          rows.foreach { row => buf.writeDouble(row.getDouble(idx)) }
+        case FloatType =>
+          rows.foreach { row => buf.writeFloat(row.getFloat(idx)) }
+        case BooleanType =>
+          rows.foreach { row => buf.writeBoolean(row.getBoolean(idx)) }
+      }
       Array(validity, buf)
     }.toList.asJava
 

@@ -22,24 +22,39 @@ import java.net.{InetAddress, Socket}
 import java.nio.{ByteBuffer, ByteOrder}
 import java.nio.channels.FileChannel
 
+import scala.util.Random
+
 import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.file.ArrowReader
+import org.apache.arrow.vector.types.pojo.ArrowType
 
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
+
 case class ArrowIntTest(a: Int, b: Int)
+case class ArrowIntDoubleTest(a: Int, b: Double)
 
 class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
   import testImplicits._
 
+  final val numElements = 4
+  @transient var dataset: Dataset[_] = _
+  @transient var column1: Seq[Int] = _
+  @transient var column2: Seq[Double] = _
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    column1 = Seq.fill(numElements)(Random.nextInt)
+    column2 = Seq.fill(numElements)(Random.nextDouble)
+    dataset = column1.zip(column2).map{ case (c1, c2) => ArrowIntDoubleTest(c1, c2) }.toDS()
+  }
+
   test("Collect as arrow to python") {
 
-    val ds = Seq(ArrowIntTest(1, 2), ArrowIntTest(2, 3), ArrowIntTest(3, 4)).toDS()
-
-    val port = ds.collectAsArrowToPython()
+    val port = dataset.collectAsArrowToPython()
 
     val receiver: RecordBatchReceiver = new RecordBatchReceiver
     val (buffer, numBytesRead) = receiver.connectAndRead(port)
@@ -48,11 +63,13 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
     val footer = reader.readFooter()
     val schema = footer.getSchema
-    assert(schema.getFields.size() === ds.schema.fields.length)
-    assert(schema.getFields.get(0).getName === ds.schema.fields(0).name)
-    assert(schema.getFields.get(0).isNullable === ds.schema.fields(0).nullable)
-    assert(schema.getFields.get(1).getName === ds.schema.fields(1).name)
-    assert(schema.getFields.get(1).isNullable === ds.schema.fields(1).nullable)
+    assert(schema.getFields.size() === dataset.schema.fields.length)
+    assert(schema.getFields.get(0).getName === dataset.schema.fields(0).name)
+    assert(schema.getFields.get(0).isNullable === dataset.schema.fields(0).nullable)
+    assert(schema.getFields.get(0).getType.isInstanceOf[ArrowType.Int])
+    assert(schema.getFields.get(1).getName === dataset.schema.fields(1).name)
+    assert(schema.getFields.get(1).isNullable === dataset.schema.fields(1).nullable)
+    assert(schema.getFields.get(1).getType.isInstanceOf[ArrowType.FloatingPoint])
 
     val blockMetadata = footer.getRecordBatches
     assert(blockMetadata.size() === 1)
@@ -62,16 +79,16 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
     assert(nodes.size() === 2)
 
     val firstNode = nodes.get(0)
-    assert(firstNode.getLength === 3)
+    assert(firstNode.getLength === numElements)
     assert(firstNode.getNullCount === 0)
 
     val buffers = recordBatch.getBuffers
     assert(buffers.size() === 4)
 
-    val column1 = receiver.getIntArray(buffers.get(1))
-    assert(column1=== Array(1, 2, 3))
-    val column2 = receiver.getIntArray(buffers.get(3))
-    assert(column2 === Array(2, 3, 4))
+    val column1Read = receiver.getIntArray(buffers.get(1))
+    assert(column1Read === column1)
+    val column2Read = receiver.getDoubleArray(buffers.get(3))
+    assert(column2Read === column2)
   }
 }
 
@@ -80,10 +97,17 @@ class RecordBatchReceiver {
   val allocator = new RootAllocator(Long.MaxValue)
 
   def getIntArray(buf: ArrowBuf): Array[Int] = {
-    val intBuf = ByteBuffer.wrap(array(buf)).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer()
-    val intArray = Array.ofDim[Int](intBuf.remaining())
-    intBuf.get(intArray)
-    intArray
+    val buffer = ByteBuffer.wrap(array(buf)).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer()
+    val resultArray = Array.ofDim[Int](buffer.remaining())
+    buffer.get(resultArray)
+    resultArray
+  }
+
+  def getDoubleArray(buf: ArrowBuf): Array[Double] = {
+    val buffer = ByteBuffer.wrap(array(buf)).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer()
+    val resultArray = Array.ofDim[Double](buffer.remaining())
+    buffer.get(resultArray)
+    resultArray
   }
 
   private def array(buf: ArrowBuf): Array[Byte] = {
