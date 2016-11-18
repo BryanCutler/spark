@@ -19,12 +19,13 @@ package org.apache.spark.sql
 
 import java.io._
 import java.net.{InetAddress, Socket}
+import java.nio.{ByteBuffer, ByteOrder}
 import java.nio.channels.FileChannel
 
 import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.file.ArrowReader
-import org.apache.arrow.vector.schema.ArrowRecordBatch
+
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
@@ -40,28 +41,37 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
     val port = ds.collectAsArrowToPython()
 
-    val clientThread: Thread = new Thread(new Runnable() {
-      def run() {
-        try {
-          val receiver: RecordBatchReceiver = new RecordBatchReceiver
-          val record: ArrowRecordBatch = receiver.read(port)
-        }
-          catch {
-            case e: Exception =>
-              throw e
-          }
-        }
-    })
+    val receiver: RecordBatchReceiver = new RecordBatchReceiver
+    val (buffer, numBytesRead) = receiver.connectAndRead(port)
+    val channel = receiver.makeFile(buffer)
+    val reader = new ArrowReader(channel, receiver.allocator)
 
-    clientThread.start()
+    val footer = reader.readFooter()
+    val schema = footer.getSchema
+    assert(schema.getFields.size() === ds.schema.fields.length)
+    assert(schema.getFields.get(0).getName === ds.schema.fields(0).name)
+    assert(schema.getFields.get(0).isNullable === ds.schema.fields(0).nullable)
+    assert(schema.getFields.get(1).getName === ds.schema.fields(1).name)
+    assert(schema.getFields.get(1).isNullable === ds.schema.fields(1).nullable)
 
-    try {
-      clientThread.join()
-    } catch {
-      case e: InterruptedException =>
-        throw e
-      case _ =>
-    }
+    val blockMetadata = footer.getRecordBatches
+    assert(blockMetadata.size() === 1)
+
+    val recordBatch = reader.readRecordBatch(blockMetadata.get(0))
+    val nodes = recordBatch.getNodes
+    assert(nodes.size() === 2)
+
+    val firstNode = nodes.get(0)
+    assert(firstNode.getLength === 3)
+    assert(firstNode.getNullCount === 0)
+
+    val buffers = recordBatch.getBuffers
+    assert(buffers.size() === 4)
+
+    val column1 = receiver.getIntArray(buffers.get(1))
+    assert(column1=== Array(1, 2, 3))
+    val column2 = receiver.getIntArray(buffers.get(3))
+    assert(column2 === Array(2, 3, 4))
   }
 }
 
@@ -69,7 +79,14 @@ class RecordBatchReceiver {
 
   val allocator = new RootAllocator(Long.MaxValue)
 
-  def array(buf: ArrowBuf): Array[Byte] = {
+  def getIntArray(buf: ArrowBuf): Array[Int] = {
+    val intBuf = ByteBuffer.wrap(array(buf)).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer()
+    val intArray = Array.ofDim[Int](intBuf.remaining())
+    intBuf.get(intArray)
+    intArray
+  }
+
+  private def array(buf: ArrowBuf): Array[Byte] = {
     val bytes = Array.ofDim[Byte](buf.readableBytes())
     buf.readBytes(bytes)
     bytes
@@ -98,20 +115,5 @@ class RecordBatchReceiver {
 
     val arrowIns = new FileInputStream(arrowFile.getPath)
     arrowIns.getChannel
-  }
-
-  def readRecordBatch(channel: FileChannel, len: Int): ArrowRecordBatch = {
-    val reader = new ArrowReader(channel, allocator)
-    val footer = reader.readFooter()
-    val schema = footer.getSchema
-    val blocks = footer.getRecordBatches
-    val recordBatch = reader.readRecordBatch(blocks.get(0))
-    recordBatch
-  }
-
-  def read(port: Int): ArrowRecordBatch = {
-    val (buffer, len) = connectAndRead(port)
-    val fc = makeFile(buffer)
-    readRecordBatch(fc, len)
   }
 }
