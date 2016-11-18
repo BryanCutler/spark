@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql
 
-import java.io.{DataInputStream, EOFException, RandomAccessFile}
+import java.io._
 import java.net.{InetAddress, Socket}
 import java.nio.channels.FileChannel
 
@@ -25,8 +25,8 @@ import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.file.ArrowReader
 import org.apache.arrow.vector.schema.ArrowRecordBatch
-
 import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.util.Utils
 
 case class ArrowIntTest(a: Int, b: Int)
 
@@ -67,6 +67,8 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
 class RecordBatchReceiver {
 
+  val allocator = new RootAllocator(Long.MaxValue)
+
   def array(buf: ArrowBuf): Array[Byte] = {
     val bytes = Array.ofDim[Byte](buf.readableBytes())
     buf.readBytes(bytes)
@@ -74,33 +76,32 @@ class RecordBatchReceiver {
   }
 
   def connectAndRead(port: Int): (Array[Byte], Int) = {
-    val s = new Socket(InetAddress.getByName("localhost"), port)
-    val is = s.getInputStream
+    val clientSocket = new Socket(InetAddress.getByName("localhost"), port)
+    val clientDataIns = new DataInputStream(clientSocket.getInputStream)
 
-    val dis = new DataInputStream(is)
-    val len = dis.readInt()
+    val messageLength = clientDataIns.readInt()
 
-    val buffer = Array.ofDim[Byte](len)
-    val bytesRead = dis.read(buffer)
-    if (bytesRead != len) {
-      throw new EOFException("Wrong EOF")
+    val buffer = Array.ofDim[Byte](messageLength)
+    val bytesRead = clientDataIns.read(buffer)
+    if (bytesRead != messageLength) {
+      throw new EOFException("Wrong EOF to read Arrow Bytes")
     }
-    (buffer, len)
+    (buffer, messageLength)
   }
 
   def makeFile(buffer: Array[Byte]): FileChannel = {
-    var aFile = new RandomAccessFile("/tmp/nio-data.txt", "rw")
-    aFile.write(buffer)
-    aFile.close()
+    val tempDir = Utils.createTempDir(namePrefix = this.getClass.getName).getPath
+    val arrowFile = new File(tempDir, "arrow-bytes")
+    val arrowOus = new FileOutputStream(arrowFile.getPath)
+    arrowOus.write(buffer)
+    arrowOus.close()
 
-    aFile = new RandomAccessFile("/tmp/nio-data.txt", "r")
-    val fChannel = aFile.getChannel
-    fChannel
+    val arrowIns = new FileInputStream(arrowFile.getPath)
+    arrowIns.getChannel
   }
 
-  def readRecordBatch(fc: FileChannel, len: Int): ArrowRecordBatch = {
-    val allocator = new RootAllocator(len)
-    val reader = new ArrowReader(fc, allocator)
+  def readRecordBatch(channel: FileChannel, len: Int): ArrowRecordBatch = {
+    val reader = new ArrowReader(channel, allocator)
     val footer = reader.readFooter()
     val schema = footer.getSchema
     val blocks = footer.getRecordBatches
