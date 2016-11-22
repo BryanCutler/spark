@@ -25,16 +25,17 @@ import java.nio.channels.FileChannel
 import scala.util.Random
 
 import io.netty.buffer.ArrowBuf
+import org.apache.arrow.flatbuf.Precision
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.file.ArrowReader
 import org.apache.arrow.vector.types.pojo.ArrowType
 
 import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 
-case class ArrowIntTest(a: Int, b: Int)
-case class ArrowIntDoubleTest(a: Int, b: Double)
+case class ArrowTestClass(a: Int, b: Double, c: String)
 
 class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
@@ -44,12 +45,15 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
   @transient var dataset: Dataset[_] = _
   @transient var column1: Seq[Int] = _
   @transient var column2: Seq[Double] = _
+  @transient var column3: Seq[String] = _
 
   override def beforeAll(): Unit = {
     super.beforeAll()
     column1 = Seq.fill(numElements)(Random.nextInt)
     column2 = Seq.fill(numElements)(Random.nextDouble)
-    dataset = column1.zip(column2).map{ case (c1, c2) => ArrowIntDoubleTest(c1, c2) }.toDS()
+    column3 = Seq.fill(numElements)(Random.nextString(Random.nextInt(100)))
+    dataset = column1.zip(column2).zip(column3)
+      .map{ case ((c1, c2), c3) => ArrowTestClass(c1, c2, c3) }.toDS()
   }
 
   test("Collect as arrow to python") {
@@ -63,32 +67,50 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
     val footer = reader.readFooter()
     val schema = footer.getSchema
-    assert(schema.getFields.size() === dataset.schema.fields.length)
-    assert(schema.getFields.get(0).getName === dataset.schema.fields(0).name)
-    assert(schema.getFields.get(0).isNullable === dataset.schema.fields(0).nullable)
-    assert(schema.getFields.get(0).getType.isInstanceOf[ArrowType.Int])
-    assert(schema.getFields.get(1).getName === dataset.schema.fields(1).name)
-    assert(schema.getFields.get(1).isNullable === dataset.schema.fields(1).nullable)
-    assert(schema.getFields.get(1).getType.isInstanceOf[ArrowType.FloatingPoint])
+    val numCols = schema.getFields.size()
+    assert(numCols === dataset.schema.fields.length)
+    for (i <- 0 to schema.getFields.size()) {
+      val arrowField = schema.getFields.get(i)
+      val sparkField = dataset.schema.fields(i)
+      assert(arrowField.getName === sparkField.name)
+      assert(arrowField.isNullable === sparkField.nullable)
+      assert(DatasetToArrowSuite.compareSchemaTypes(arrowField.getType, sparkField.dataType))
+    }
 
     val blockMetadata = footer.getRecordBatches
     assert(blockMetadata.size() === 1)
 
     val recordBatch = reader.readRecordBatch(blockMetadata.get(0))
     val nodes = recordBatch.getNodes
-    assert(nodes.size() === 2)
+    assert(nodes.size() === numCols)
 
     val firstNode = nodes.get(0)
     assert(firstNode.getLength === numElements)
     assert(firstNode.getNullCount === 0)
 
     val buffers = recordBatch.getBuffers
-    assert(buffers.size() === 4)
+    assert(buffers.size() === numCols * 2)
 
     val column1Read = receiver.getIntArray(buffers.get(1))
     assert(column1Read === column1)
     val column2Read = receiver.getDoubleArray(buffers.get(3))
     assert(column2Read === column2)
+    // TODO: Check column 3 is right
+  }
+}
+
+object DatasetToArrowSuite {
+  def compareSchemaTypes(at: ArrowType, dt: DataType): Boolean = {
+    (at, dt) match {
+      case (_: ArrowType.Int, _: IntegerType) => true
+      case (_: ArrowType.FloatingPoint, _: DoubleType) =>
+        at.asInstanceOf[ArrowType.FloatingPoint].getPrecision == Precision.DOUBLE
+      case (_: ArrowType.FloatingPoint, _: FloatType) =>
+        at.asInstanceOf[ArrowType.FloatingPoint].getPrecision == Precision.SINGLE
+      case (_: ArrowType.Utf8, _: StringType) => true
+      case (_: ArrowType.Bool, _: BooleanType) => true
+      case _ => false
+    }
   }
 }
 
@@ -107,6 +129,13 @@ class RecordBatchReceiver {
     val buffer = ByteBuffer.wrap(array(buf)).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer()
     val resultArray = Array.ofDim[Double](buffer.remaining())
     buffer.get(resultArray)
+    resultArray
+  }
+
+  def getStringArray(buf: ArrowBuf): Array[String] = {
+    val buffer = ByteBuffer.wrap(array(buf)).order(ByteOrder.LITTLE_ENDIAN).asCharBuffer()
+    val resultArray = Array.ofDim[String](buffer.remaining())
+    // TODO: Get String Array back
     resultArray
   }
 

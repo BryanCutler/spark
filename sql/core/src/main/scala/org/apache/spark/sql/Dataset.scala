@@ -2293,7 +2293,7 @@ class Dataset[T] private[sql](
       case IntegerType =>
         new ArrowType.Int(8 * IntegerType.defaultSize, true)
       case StringType =>
-        ArrowType.Utf8.INSTANCE
+        ArrowType.List.INSTANCE
       case DoubleType =>
         new ArrowType.FloatingPoint(Precision.DOUBLE)
       case FloatType =>
@@ -2354,7 +2354,10 @@ class Dataset[T] private[sql](
         case IntegerType =>
           rows.foreach { row => buf.writeInt(row.getInt(idx)) }
         case StringType =>
-          rows.foreach { row => buf.writeByte(row.getByte(idx)) }
+          // TODO: Transform String type
+          rows.foreach { row =>
+            buf.writeBytes(row.getString(idx).getBytes())
+          }
         case DoubleType =>
           rows.foreach { row => buf.writeDouble(row.getDouble(idx)) }
         case FloatType =>
