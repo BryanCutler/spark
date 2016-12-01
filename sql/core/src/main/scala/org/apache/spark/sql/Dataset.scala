@@ -2311,8 +2311,15 @@ class Dataset[T] private[sql](
   private[sql] def schemaToArrowSchema(schema: StructType): Schema = {
     val arrowFields = schema.fields.map {
       case StructField(name, dataType, nullable, metadata) =>
-        // TODO: Consider nested types
-        new Field(name, nullable, dataTypeToArrowType(dataType), List.empty[Field].asJava)
+        dataType match {
+          // TODO: Consider other nested types
+          case StringType =>
+            // TODO: Make sure String => List<Utf8>
+            val itemField = new Field("item", false, ArrowType.Utf8, List.empty[Field].asJava)
+            new Field(name, nullable, dataTypeToArrowType(dataType), List(itemField).asJava)
+          case _ =>
+            new Field(name, nullable, dataTypeToArrowType(dataType), List.empty[Field].asJava)
+        }
     }
     val arrowSchema = new Schema(arrowFields.toIterable.asJava)
     arrowSchema
@@ -2340,43 +2347,101 @@ class Dataset[T] private[sql](
     buf
   }
 
+  private def getAndSetToArrow(
+      row: InternalRow, buf: ArrowBuf, dataType: DataType, ordinal: Int): Unit = {
+    if (row.isNullAt(ordinal)) {
+
+    } else {
+      dataType match {
+        case NullType =>
+        case BooleanType =>
+          buf.writeBoolean(row.getBoolean(ordinal))
+        case ShortType =>
+          buf.writeShort(row.getShort(ordinal))
+        case IntegerType =>
+          buf.writeInt(row.getInt(ordinal))
+        case FloatType =>
+          buf.writeFloat(row.getFloat(ordinal))
+        case DoubleType =>
+          buf.writeDouble(row.getDouble(ordinal))
+        case _ =>
+          throw new UnsupportedOperationException(
+            s"Unsupported data type ${dataType.simpleString}")
+      }
+    }
+  }
+
+  private def internalRowToArrowBuf(
+      rows: Array[InternalRow],
+      idx: Int,
+      field: StructField,
+      allocator: RootAllocator): (Array[ArrowBuf], Array[ArrowFieldNode]) = {
+    val numOfRows = rows.length
+
+    field.dataType match {
+      case IntegerType | DoubleType | FloatType | BooleanType =>
+        val validity = allocator.buffer(numBytesOfBitmap(numOfRows))
+        val buf = allocator.buffer(numOfRows * field.dataType.defaultSize)
+        var nullCount = 0
+        rows.foreach { row =>
+          if (row.isNullAt(idx)) {
+            nullCount += 1
+          } else {
+            getAndSetToArrow(row, buf, field.dataType, idx)
+          }
+        }
+
+        val fieldNode = new ArrowFieldNode(numOfRows, nullCount)
+
+        (Array(validity, buf), Array(fieldNode))
+
+      case StringType =>
+        val validityOffset = allocator.buffer(numBytesOfBitmap(numOfRows))
+        val bufOffset = allocator.buffer(numOfRows * IntegerType.defaultSize)
+        var previousOffset = 0
+        bufOffset.writeInt(previousOffset)  // Start position
+        val validityValues = allocator.buffer(numBytesOfBitmap(numOfRows))
+        val bufValues = allocator.buffer(numOfRows * field.dataType.defaultSize)
+        var bytesCount = 0
+        var nullCount = 0
+        rows.foreach { row =>
+          if (row.isNullAt(idx)) {
+            nullCount += 1
+            bufOffset.writeInt(previousOffset)
+          } else {
+            val bytes = row.getUTF8String(idx).getBytes
+            bytesCount += bytes.length
+            previousOffset += bytesCount
+            bufOffset.writeInt(previousOffset)
+            bufValues.writeBytes(bytes)
+          }
+        }
+
+        val fieldNodeOffset = if (field.nullable) {
+          new ArrowFieldNode(numOfRows, nullCount)
+        } else {
+          new ArrowFieldNode(numOfRows, 0)
+        }
+
+        val fieldNodeValues = new ArrowFieldNode(bytesCount, 0)
+
+        (Array(validityOffset, bufOffset, validityValues, bufValues),
+          Array(fieldNodeOffset, fieldNodeValues))
+    }
+  }
   /**
    * Transfer an array of InternalRow to an ArrowRecordBatch.
    */
   private[sql] def internalRowsToArrowRecordBatch(
       rows: Array[InternalRow], allocator: RootAllocator): ArrowRecordBatch = {
-    val numOfRows = rows.length
+    val bufAndField = this.schema.fields.zipWithIndex.map { case (field, idx) =>
+      internalRowToArrowBuf(rows, idx, field, allocator)
+    }
 
-    val buffers = this.schema.fields.zipWithIndex.flatMap { case (field, idx) =>
-      val validity = internalRowToValidityMap(rows, idx, field, allocator)
-      val buf = allocator.buffer(numOfRows * field.dataType.defaultSize)
-      field.dataType match {
-        case IntegerType =>
-          rows.foreach { row => buf.writeInt(row.getInt(idx)) }
-        case StringType =>
-          // TODO: Transform String type
-          rows.foreach { row =>
-            buf.writeBytes(row.getString(idx).getBytes())
-          }
-        case DoubleType =>
-          rows.foreach { row => buf.writeDouble(row.getDouble(idx)) }
-        case FloatType =>
-          rows.foreach { row => buf.writeFloat(row.getFloat(idx)) }
-        case BooleanType =>
-          rows.foreach { row => buf.writeBoolean(row.getBoolean(idx)) }
-      }
-      Array(validity, buf)
-    }.toList.asJava
+    val buffers = bufAndField.flatMap(_._1).toList.asJava
+    val fieldNodes = bufAndField.flatMap(_._2).toList.asJava
 
-    val fieldNodes = this.schema.fields.zipWithIndex.map { case (field, idx) =>
-      if (field.nullable) {
-        new ArrowFieldNode(numOfRows, 0)
-      } else {
-        new ArrowFieldNode(numOfRows, 0)
-      }
-    }.toList.asJava
-
-    new ArrowRecordBatch(numOfRows, fieldNodes, buffers)
+    new ArrowRecordBatch(rows.length, fieldNodes, buffers)
   }
 
   /**
