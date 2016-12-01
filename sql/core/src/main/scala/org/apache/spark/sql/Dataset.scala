@@ -2315,7 +2315,8 @@ class Dataset[T] private[sql](
           // TODO: Consider other nested types
           case StringType =>
             // TODO: Make sure String => List<Utf8>
-            val itemField = new Field("item", false, ArrowType.Utf8, List.empty[Field].asJava)
+            val itemField =
+              new Field("item", false, ArrowType.Utf8.INSTANCE, List.empty[Field].asJava)
             new Field(name, nullable, dataTypeToArrowType(dataType), List(itemField).asJava)
           case _ =>
             new Field(name, nullable, dataTypeToArrowType(dataType), List.empty[Field].asJava)
