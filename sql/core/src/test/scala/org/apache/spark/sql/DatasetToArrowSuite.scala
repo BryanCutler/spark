@@ -28,35 +28,33 @@ import io.netty.buffer.ArrowBuf
 import org.apache.arrow.flatbuf.Precision
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.file.ArrowReader
-import org.apache.arrow.vector.types.pojo.ArrowType
+import org.apache.arrow.vector.types.pojo.{ArrowType, Field}
 
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.sql.types._
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
 
-case class ArrowTestClass(a: Int, b: Double, c: String)
+case class ArrowTestClass(col1: Int, col2: Double, col3: String)
 
 class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
   import testImplicits._
 
   final val numElements = 4
-  @transient var dataset: Dataset[_] = _
-  @transient var column1: Seq[Int] = _
-  @transient var column2: Seq[Double] = _
-  @transient var column3: Seq[String] = _
+  @transient var data: Seq[ArrowTestClass] = _
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    column1 = Seq.fill(numElements)(Random.nextInt)
-    column2 = Seq.fill(numElements)(Random.nextDouble)
-    column3 = Seq.fill(numElements)(Random.nextString(Random.nextInt(100)))
-    dataset = column1.zip(column2).zip(column3)
-      .map{ case ((c1, c2), c3) => ArrowTestClass(c1, c2, c3) }.toDS()
+    data = Seq.fill(numElements)(ArrowTestClass(
+      Random.nextInt, Random.nextDouble, Random.nextString(Random.nextInt(100))))
+
   }
 
   test("Collect as arrow to python") {
+
+    val dataset = data.toDS()
 
     val port = dataset.collectAsArrowToPython()
 
@@ -67,14 +65,15 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
     val footer = reader.readFooter()
     val schema = footer.getSchema
+
     val numCols = schema.getFields.size()
     assert(numCols === dataset.schema.fields.length)
-    for (i <- 0 to schema.getFields.size()) {
+    for (i <- 0 until schema.getFields.size()) {
       val arrowField = schema.getFields.get(i)
       val sparkField = dataset.schema.fields(i)
       assert(arrowField.getName === sparkField.name)
       assert(arrowField.isNullable === sparkField.nullable)
-      assert(DatasetToArrowSuite.compareSchemaTypes(arrowField.getType, sparkField.dataType))
+      assert(DatasetToArrowSuite.compareSchemaTypes(arrowField, sparkField))
     }
 
     val blockMetadata = footer.getRecordBatches
@@ -82,32 +81,35 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
 
     val recordBatch = reader.readRecordBatch(blockMetadata.get(0))
     val nodes = recordBatch.getNodes
-    assert(nodes.size() === numCols)
+    assert(nodes.size() === numCols + 1)  // +1 for Type String, which has two nodes.
 
     val firstNode = nodes.get(0)
     assert(firstNode.getLength === numElements)
     assert(firstNode.getNullCount === 0)
 
     val buffers = recordBatch.getBuffers
-    assert(buffers.size() === numCols * 2)
+    assert(buffers.size() === (numCols + 1) * 2)  // +1 for Type String
 
-    val column1Read = receiver.getIntArray(buffers.get(1))
-    assert(column1Read === column1)
-    val column2Read = receiver.getDoubleArray(buffers.get(3))
-    assert(column2Read === column2)
-    // TODO: Check column 3 is right
+    assert(receiver.getIntArray(buffers.get(1)) === data.map(_.col1))
+    assert(receiver.getDoubleArray(buffers.get(3)) === data.map(_.col2))
+    assert(receiver.getStringArray(buffers.get(5), buffers.get(7)) ===
+      data.map(d => UTF8String.fromString(d.col3)).toArray)
   }
 }
 
 object DatasetToArrowSuite {
-  def compareSchemaTypes(at: ArrowType, dt: DataType): Boolean = {
-    (at, dt) match {
+  def compareSchemaTypes(arrowField: Field, sparkField: StructField): Boolean = {
+    val arrowType = arrowField.getType
+    val sparkType = sparkField.dataType
+    (arrowType, sparkType) match {
       case (_: ArrowType.Int, _: IntegerType) => true
       case (_: ArrowType.FloatingPoint, _: DoubleType) =>
-        at.asInstanceOf[ArrowType.FloatingPoint].getPrecision == Precision.DOUBLE
+        arrowType.asInstanceOf[ArrowType.FloatingPoint].getPrecision == Precision.DOUBLE
       case (_: ArrowType.FloatingPoint, _: FloatType) =>
-        at.asInstanceOf[ArrowType.FloatingPoint].getPrecision == Precision.SINGLE
-      case (_: ArrowType.Utf8, _: StringType) => true
+        arrowType.asInstanceOf[ArrowType.FloatingPoint].getPrecision == Precision.SINGLE
+      case (_: ArrowType.List, _: StringType) =>
+        val subField = arrowField.getChildren
+        (subField.size() == 1) && subField.get(0).getType.isInstanceOf[ArrowType.Utf8]
       case (_: ArrowType.Bool, _: BooleanType) => true
       case _ => false
     }
@@ -132,14 +134,19 @@ class RecordBatchReceiver {
     resultArray
   }
 
-  def getStringArray(buf: ArrowBuf): Array[String] = {
-    val buffer = ByteBuffer.wrap(array(buf)).order(ByteOrder.LITTLE_ENDIAN).asCharBuffer()
-    val resultArray = Array.ofDim[String](buffer.remaining())
-    // TODO: Get String Array back
-    resultArray
+  def getStringArray(bufOffsets: ArrowBuf, bufValues: ArrowBuf): Array[UTF8String] = {
+    val offsets = getIntArray(bufOffsets)
+    val lens = offsets.zip(offsets.drop(1))
+      .map { case (prevOffset, offset) => offset - prevOffset }
+
+    val values = array(bufValues)
+    val strings = offsets.zip(lens).map { case (offset, len) =>
+      UTF8String.fromBytes(values, offset, len)
+    }
+    strings
   }
 
-  private def array(buf: ArrowBuf): Array[Byte] = {
+  def array(buf: ArrowBuf): Array[Byte] = {
     val bytes = Array.ofDim[Byte](buf.readableBytes())
     buf.readBytes(bytes)
     bytes

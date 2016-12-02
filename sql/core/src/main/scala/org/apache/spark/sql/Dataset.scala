@@ -18,6 +18,7 @@
 package org.apache.spark.sql
 
 import java.io.{ByteArrayOutputStream, CharArrayWriter}
+import java.nio.ByteBuffer
 import java.nio.channels.Channels
 
 import scala.collection.JavaConverters._
@@ -2436,19 +2437,6 @@ class Dataset[T] private[sql](
     Math.ceil(numOfRows / 64.0).toInt * 8
   }
 
-  /**
-   * Infer the validity map from the internal rows.
-   * @param rows An array of InternalRows
-   * @param idx Index of current column in the array of InternalRows
-   * @param field StructField related to the current column
-   * @param allocator ArrowBuf allocator
-   */
-  private def internalRowToValidityMap(
-    rows: Array[InternalRow], idx: Int, field: StructField, allocator: RootAllocator): ArrowBuf = {
-    val buf = allocator.buffer(numBytesOfBitmap(rows.length))
-    buf
-  }
-
   private def getAndSetToArrow(
       row: InternalRow, buf: ArrowBuf, dataType: DataType, ordinal: Int): Unit = {
     if (row.isNullAt(ordinal)) {
@@ -2499,22 +2487,20 @@ class Dataset[T] private[sql](
 
       case StringType =>
         val validityOffset = allocator.buffer(numBytesOfBitmap(numOfRows))
-        val bufOffset = allocator.buffer(numOfRows * IntegerType.defaultSize)
-        var previousOffset = 0
-        bufOffset.writeInt(previousOffset)  // Start position
-        val validityValues = allocator.buffer(numBytesOfBitmap(numOfRows))
-        val bufValues = allocator.buffer(numOfRows * field.dataType.defaultSize)
+        val bufOffset = allocator.buffer((numOfRows + 1) * IntegerType.defaultSize)
         var bytesCount = 0
+        bufOffset.writeInt(bytesCount)  // Start position
+        val validityValues = allocator.buffer(numBytesOfBitmap(numOfRows))
+        val bufValues = allocator.buffer(Int.MaxValue)  // TODO: Reduce the size?
         var nullCount = 0
         rows.foreach { row =>
           if (row.isNullAt(idx)) {
             nullCount += 1
-            bufOffset.writeInt(previousOffset)
+            bufOffset.writeInt(bytesCount)
           } else {
             val bytes = row.getUTF8String(idx).getBytes
             bytesCount += bytes.length
-            previousOffset += bytesCount
-            bufOffset.writeInt(previousOffset)
+            bufOffset.writeInt(bytesCount)
             bufValues.writeBytes(bytes)
           }
         }
