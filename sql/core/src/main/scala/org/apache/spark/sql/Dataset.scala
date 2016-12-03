@@ -18,6 +18,7 @@
 package org.apache.spark.sql
 
 import java.io.{ByteArrayOutputStream, CharArrayWriter}
+import java.nio.ByteBuffer
 import java.nio.channels.Channels
 
 import scala.collection.JavaConverters._
@@ -26,6 +27,7 @@ import scala.reflect.runtime.universe.TypeTag
 import scala.util.control.NonFatal
 
 import io.netty.buffer.ArrowBuf
+import org.apache.arrow.flatbuf.Precision
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.file.ArrowWriter
 import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
@@ -43,18 +45,20 @@ import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.encoders._
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
+import org.apache.spark.sql.catalyst.json.JacksonGenerator
 import org.apache.spark.sql.catalyst.optimizer.CombineUnions
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.plans.physical.{Partitioning, PartitioningCollection}
 import org.apache.spark.sql.catalyst.util.usePrettyExpression
 import org.apache.spark.sql.execution.{FileRelation, LogicalRDD, QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.command.{CreateViewCommand, ExplainCommand, GlobalTempView, LocalTempView}
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
-import org.apache.spark.sql.execution.datasources.json.JacksonGenerator
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.python.EvaluatePython
-import org.apache.spark.sql.streaming.{DataStreamWriter, StreamingQuery}
+import org.apache.spark.sql.streaming.DataStreamWriter
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.Utils
 
 
@@ -73,7 +77,7 @@ private[sql] object Dataset {
 /**
  * A Dataset is a strongly typed collection of domain-specific objects that can be transformed
  * in parallel using functional or relational operations. Each Dataset also has an untyped view
- * called a [[DataFrame]], which is a Dataset of [[Row]].
+ * called a `DataFrame`, which is a Dataset of [[Row]].
  *
  * Operations available on Datasets are divided into transformations and actions. Transformations
  * are the ones that produce new Datasets, and actions are the ones that trigger computation and
@@ -368,7 +372,7 @@ class Dataset[T] private[sql](
    *  - When `U` is a tuple, the columns will be be mapped by ordinal (i.e. the first column will
    *    be assigned to `_1`).
    *  - When `U` is a primitive type (i.e. String, Int, etc), then the first column of the
-   *    [[DataFrame]] will be used.
+   *    `DataFrame` will be used.
    *
    * If the schema of the Dataset does not match the desired `U` type, you can use `select`
    * along with `alias` or `as` to rearrange or rename as required.
@@ -382,7 +386,7 @@ class Dataset[T] private[sql](
 
   /**
    * Converts this strongly typed collection of data to generic `DataFrame` with columns renamed.
-   * This can be quite convenient in conversion from a RDD of tuples into a [[DataFrame]] with
+   * This can be quite convenient in conversion from an RDD of tuples into a `DataFrame` with
    * meaningful names. For example:
    * {{{
    *   val rdd: RDD[(Int, String)] = ...
@@ -477,17 +481,108 @@ class Dataset[T] private[sql](
   /**
    * Returns true if this Dataset contains one or more sources that continuously
    * return data as it arrives. A Dataset that reads data from a streaming source
-   * must be executed as a [[StreamingQuery]] using the `start()` method in
-   * [[DataStreamWriter]]. Methods that return a single answer, e.g. `count()` or
+   * must be executed as a `StreamingQuery` using the `start()` method in
+   * `DataStreamWriter`. Methods that return a single answer, e.g. `count()` or
    * `collect()`, will throw an [[AnalysisException]] when there is a streaming
    * source present.
    *
-   * @group basic
+   * @group streaming
    * @since 2.0.0
    */
   @Experimental
   @InterfaceStability.Evolving
   def isStreaming: Boolean = logicalPlan.isStreaming
+
+  /**
+   * Eagerly checkpoint a Dataset and return the new Dataset. Checkpointing can be used to truncate
+   * the logical plan of this Dataset, which is especially useful in iterative algorithms where the
+   * plan may grow exponentially. It will be saved to files inside the checkpoint
+   * directory set with `SparkContext#setCheckpointDir`.
+   *
+   * @group basic
+   * @since 2.1.0
+   */
+  @Experimental
+  @InterfaceStability.Evolving
+  def checkpoint(): Dataset[T] = checkpoint(eager = true)
+
+  /**
+   * Returns a checkpointed version of this Dataset. Checkpointing can be used to truncate the
+   * logical plan of this Dataset, which is especially useful in iterative algorithms where the
+   * plan may grow exponentially. It will be saved to files inside the checkpoint
+   * directory set with `SparkContext#setCheckpointDir`.
+   *
+   * @group basic
+   * @since 2.1.0
+   */
+  @Experimental
+  @InterfaceStability.Evolving
+  def checkpoint(eager: Boolean): Dataset[T] = {
+    val internalRdd = queryExecution.toRdd.map(_.copy())
+    internalRdd.checkpoint()
+
+    if (eager) {
+      internalRdd.count()
+    }
+
+    val physicalPlan = queryExecution.executedPlan
+
+    // Takes the first leaf partitioning whenever we see a `PartitioningCollection`. Otherwise the
+    // size of `PartitioningCollection` may grow exponentially for queries involving deep inner
+    // joins.
+    def firstLeafPartitioning(partitioning: Partitioning): Partitioning = {
+      partitioning match {
+        case p: PartitioningCollection => firstLeafPartitioning(p.partitionings.head)
+        case p => p
+      }
+    }
+
+    val outputPartitioning = firstLeafPartitioning(physicalPlan.outputPartitioning)
+
+    Dataset.ofRows(
+      sparkSession,
+      LogicalRDD(
+        logicalPlan.output,
+        internalRdd,
+        outputPartitioning,
+        physicalPlan.outputOrdering
+      )(sparkSession)).as[T]
+  }
+
+  /**
+   * :: Experimental ::
+   * Defines an event time watermark for this [[Dataset]]. A watermark tracks a point in time
+   * before which we assume no more late data is going to arrive.
+   *
+   * Spark will use this watermark for several purposes:
+   *  - To know when a given time window aggregation can be finalized and thus can be emitted when
+   *    using output modes that do not allow updates.
+   *  - To minimize the amount of state that we need to keep for on-going aggregations.
+   *
+   *  The current watermark is computed by looking at the `MAX(eventTime)` seen across
+   *  all of the partitions in the query minus a user specified `delayThreshold`.  Due to the cost
+   *  of coordinating this value across partitions, the actual watermark used is only guaranteed
+   *  to be at least `delayThreshold` behind the actual event time.  In some cases we may still
+   *  process records that arrive more than `delayThreshold` late.
+   *
+   * @param eventTime the name of the column that contains the event time of the row.
+   * @param delayThreshold the minimum delay to wait to data to arrive late, relative to the latest
+   *                       record that has been processed in the form of an interval
+   *                       (e.g. "1 minute" or "5 hours").
+   *
+   * @group streaming
+   * @since 2.1.0
+   */
+  @Experimental
+  @InterfaceStability.Evolving
+  // We only accept an existing column name, not a derived column here as a watermark that is
+  // defined on a derived column cannot referenced elsewhere in the plan.
+  def withWatermark(eventTime: String, delayThreshold: String): Dataset[T] = withTypedPlan {
+    val parsedDelay =
+      Option(CalendarInterval.fromString("interval " + delayThreshold))
+        .getOrElse(throw new AnalysisException(s"Unable to parse time delay '$delayThreshold'"))
+    EventTimeWatermark(UnresolvedAttribute(eventTime), parsedDelay, logicalPlan)
+  }
 
   /**
    * Displays the Dataset in a tabular form. Strings more than 20 characters will be truncated,
@@ -599,7 +694,7 @@ class Dataset[T] private[sql](
   def stat: DataFrameStatFunctions = new DataFrameStatFunctions(toDF())
 
   /**
-   * Join with another [[DataFrame]].
+   * Join with another `DataFrame`.
    *
    * Behaves as an INNER JOIN and requires a subsequent join predicate.
    *
@@ -613,7 +708,7 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Inner equi-join with another [[DataFrame]] using the given column.
+   * Inner equi-join with another `DataFrame` using the given column.
    *
    * Different from other join functions, the join column will only appear once in the output,
    * i.e. similar to SQL's `JOIN USING` syntax.
@@ -623,12 +718,12 @@ class Dataset[T] private[sql](
    *   df1.join(df2, "user_id")
    * }}}
    *
-   * Note that if you perform a self-join using this function without aliasing the input
-   * [[DataFrame]]s, you will NOT be able to reference any columns after the join, since
-   * there is no way to disambiguate which side of the join you would like to reference.
-   *
    * @param right Right side of the join operation.
    * @param usingColumn Name of the column to join on. This column must exist on both sides.
+   *
+   * @note If you perform a self-join using this function without aliasing the input
+   * `DataFrame`s, you will NOT be able to reference any columns after the join, since
+   * there is no way to disambiguate which side of the join you would like to reference.
    *
    * @group untypedrel
    * @since 2.0.0
@@ -638,7 +733,7 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Inner equi-join with another [[DataFrame]] using the given columns.
+   * Inner equi-join with another `DataFrame` using the given columns.
    *
    * Different from other join functions, the join columns will only appear once in the output,
    * i.e. similar to SQL's `JOIN USING` syntax.
@@ -648,12 +743,12 @@ class Dataset[T] private[sql](
    *   df1.join(df2, Seq("user_id", "user_name"))
    * }}}
    *
-   * Note that if you perform a self-join using this function without aliasing the input
-   * [[DataFrame]]s, you will NOT be able to reference any columns after the join, since
-   * there is no way to disambiguate which side of the join you would like to reference.
-   *
    * @param right Right side of the join operation.
    * @param usingColumns Names of the columns to join on. This columns must exist on both sides.
+   *
+   * @note If you perform a self-join using this function without aliasing the input
+   * `DataFrame`s, you will NOT be able to reference any columns after the join, since
+   * there is no way to disambiguate which side of the join you would like to reference.
    *
    * @group untypedrel
    * @since 2.0.0
@@ -663,18 +758,18 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Equi-join with another [[DataFrame]] using the given columns.
+   * Equi-join with another `DataFrame` using the given columns.
    *
    * Different from other join functions, the join columns will only appear once in the output,
    * i.e. similar to SQL's `JOIN USING` syntax.
    *
-   * Note that if you perform a self-join using this function without aliasing the input
-   * [[DataFrame]]s, you will NOT be able to reference any columns after the join, since
-   * there is no way to disambiguate which side of the join you would like to reference.
-   *
    * @param right Right side of the join operation.
    * @param usingColumns Names of the columns to join on. This columns must exist on both sides.
    * @param joinType One of: `inner`, `outer`, `left_outer`, `right_outer`, `leftsemi`.
+   *
+   * @note If you perform a self-join using this function without aliasing the input
+   * `DataFrame`s, you will NOT be able to reference any columns after the join, since
+   * there is no way to disambiguate which side of the join you would like to reference.
    *
    * @group untypedrel
    * @since 2.0.0
@@ -690,13 +785,13 @@ class Dataset[T] private[sql](
       Join(
         joined.left,
         joined.right,
-        UsingJoin(JoinType(joinType), usingColumns.map(UnresolvedAttribute(_))),
+        UsingJoin(JoinType(joinType), usingColumns),
         None)
     }
   }
 
   /**
-   * Inner join with another [[DataFrame]], using the given join expression.
+   * Inner join with another `DataFrame`, using the given join expression.
    *
    * {{{
    *   // The following two are equivalent:
@@ -710,7 +805,7 @@ class Dataset[T] private[sql](
   def join(right: Dataset[_], joinExprs: Column): DataFrame = join(right, joinExprs, "inner")
 
   /**
-   * Join with another [[DataFrame]], using the given join expression. The following performs
+   * Join with another `DataFrame`, using the given join expression. The following performs
    * a full outer join between `df1` and `df2`.
    *
    * {{{
@@ -774,11 +869,11 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Explicit cartesian join with another [[DataFrame]].
-   *
-   * Note that cartesian joins are very expensive without an extra filter that can be pushed down.
+   * Explicit cartesian join with another `DataFrame`.
    *
    * @param right Right side of the join operation.
+   *
+   * @note Cartesian joins are very expensive without an extra filter that can be pushed down.
    *
    * @group untypedrel
    * @since 2.1.0
@@ -789,7 +884,7 @@ class Dataset[T] private[sql](
 
   /**
    * :: Experimental ::
-   * Joins this Dataset returning a [[Tuple2]] for each pair where `condition` evaluates to
+   * Joins this Dataset returning a `Tuple2` for each pair where `condition` evaluates to
    * true.
    *
    * This is similar to the relation `join` function with one important difference in the
@@ -870,7 +965,7 @@ class Dataset[T] private[sql](
 
   /**
    * :: Experimental ::
-   * Using inner equi-join to join this Dataset returning a [[Tuple2]] for each pair
+   * Using inner equi-join to join this Dataset returning a `Tuple2` for each pair
    * where `condition` evaluates to true.
    *
    * @param other Right side of the join.
@@ -964,7 +1059,8 @@ class Dataset[T] private[sql](
 
   /**
    * Selects column based on the column name and return it as a [[Column]].
-   * Note that the column name can also reference to a nested column like `a.b`.
+   *
+   * @note The column name can also reference to a nested column like `a.b`.
    *
    * @group untypedrel
    * @since 2.0.0
@@ -973,7 +1069,8 @@ class Dataset[T] private[sql](
 
   /**
    * Selects column based on the column name and return it as a [[Column]].
-   * Note that the column name can also reference to a nested column like `a.b`.
+   *
+   * @note The column name can also reference to a nested column like `a.b`.
    *
    * @group untypedrel
    * @since 2.0.0
@@ -1541,7 +1638,7 @@ class Dataset[T] private[sql](
    * Returns a new Dataset containing rows only in both this Dataset and another Dataset.
    * This is equivalent to `INTERSECT` in SQL.
    *
-   * Note that, equality checking is performed directly on the encoded representation of the data
+   * @note Equality checking is performed directly on the encoded representation of the data
    * and thus is not affected by a custom `equals` function defined on `T`.
    *
    * @group typedrel
@@ -1555,7 +1652,7 @@ class Dataset[T] private[sql](
    * Returns a new Dataset containing rows in this Dataset but not in another Dataset.
    * This is equivalent to `EXCEPT` in SQL.
    *
-   * Note that, equality checking is performed directly on the encoded representation of the data
+   * @note Equality checking is performed directly on the encoded representation of the data
    * and thus is not affected by a custom `equals` function defined on `T`.
    *
    * @group typedrel
@@ -1566,11 +1663,14 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Returns a new Dataset by sampling a fraction of rows.
+   * Returns a new [[Dataset]] by sampling a fraction of rows, using a user-supplied seed.
    *
    * @param withReplacement Sample with replacement or not.
    * @param fraction Fraction of rows to generate.
    * @param seed Seed for sampling.
+   *
+   * @note This is NOT guaranteed to provide exactly the fraction of the count
+   * of the given [[Dataset]].
    *
    * @group typedrel
    * @since 1.6.0
@@ -1585,10 +1685,13 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Returns a new Dataset by sampling a fraction of rows, using a random seed.
+   * Returns a new [[Dataset]] by sampling a fraction of rows, using a random seed.
    *
    * @param withReplacement Sample with replacement or not.
    * @param fraction Fraction of rows to generate.
+   *
+   * @note This is NOT guaranteed to provide exactly the fraction of the total count
+   * of the given [[Dataset]].
    *
    * @group typedrel
    * @since 1.6.0
@@ -2138,7 +2241,7 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Returns a new [[DataFrame]] that contains the result of applying a serialized R function
+   * Returns a new `DataFrame` that contains the result of applying a serialized R function
    * `func` to each partition.
    */
   private[sql] def mapPartitionsInR(
@@ -2291,6 +2394,16 @@ class Dataset[T] private[sql](
     dt match {
       case IntegerType =>
         new ArrowType.Int(8 * IntegerType.defaultSize, true)
+      case StringType =>
+        ArrowType.List.INSTANCE
+      case DoubleType =>
+        new ArrowType.FloatingPoint(Precision.DOUBLE)
+      case FloatType =>
+        new ArrowType.FloatingPoint(Precision.SINGLE)
+      case BooleanType =>
+        ArrowType.Bool.INSTANCE
+      case ByteType =>
+        new ArrowType.Int(8, false)
       case _ =>
         throw new IllegalArgumentException(s"Unsupported data type")
     }
@@ -2302,8 +2415,16 @@ class Dataset[T] private[sql](
   private[sql] def schemaToArrowSchema(schema: StructType): Schema = {
     val arrowFields = schema.fields.map {
       case StructField(name, dataType, nullable, metadata) =>
-        // TODO: Consider nested types
-        new Field(name, nullable, dataTypeToArrowType(dataType), List.empty[Field].asJava)
+        dataType match {
+          // TODO: Consider other nested types
+          case StringType =>
+            // TODO: Make sure String => List<Utf8>
+            val itemField =
+              new Field("item", false, ArrowType.Utf8.INSTANCE, List.empty[Field].asJava)
+            new Field(name, nullable, dataTypeToArrowType(dataType), List(itemField).asJava)
+          case _ =>
+            new Field(name, nullable, dataTypeToArrowType(dataType), List.empty[Field].asJava)
+        }
     }
     val arrowSchema = new Schema(arrowFields.toIterable.asJava)
     arrowSchema
@@ -2319,16 +2440,89 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Infer the validity map from the internal rows.
-   * @param rows An array of InternalRows
-   * @param idx Index of current column in the array of InternalRows
-   * @param field StructField related to the current column
-   * @param allocator ArrowBuf allocator
+   * Get an entry from the InternalRow, and then set to ArrowBuf.
+   * Note: No Null check for the entry.
    */
-  private def internalRowToValidityMap(
-    rows: Array[InternalRow], idx: Int, field: StructField, allocator: RootAllocator): ArrowBuf = {
-    val buf = allocator.buffer(numBytesOfBitmap(rows.length))
-    buf
+  private def getAndSetToArrow(
+      row: InternalRow, buf: ArrowBuf, dataType: DataType, ordinal: Int): Unit = {
+    dataType match {
+      case NullType =>
+      case BooleanType =>
+        buf.writeBoolean(row.getBoolean(ordinal))
+      case ShortType =>
+        buf.writeShort(row.getShort(ordinal))
+      case IntegerType =>
+        buf.writeInt(row.getInt(ordinal))
+      case FloatType =>
+        buf.writeFloat(row.getFloat(ordinal))
+      case DoubleType =>
+        buf.writeDouble(row.getDouble(ordinal))
+      case ByteType =>
+        buf.writeByte(row.getByte(ordinal))
+      case _ =>
+        throw new UnsupportedOperationException(
+          s"Unsupported data type ${dataType.simpleString}")
+    }
+  }
+
+  /**
+   * Convert an array of InternalRow to an ArrowBuf.
+   */
+  private def internalRowToArrowBuf(
+      rows: Array[InternalRow],
+      ordinal: Int,
+      field: StructField,
+      allocator: RootAllocator): (Array[ArrowBuf], Array[ArrowFieldNode]) = {
+    val numOfRows = rows.length
+
+    field.dataType match {
+      case IntegerType | DoubleType | FloatType | BooleanType | ByteType =>
+        val validity = allocator.buffer(numBytesOfBitmap(numOfRows))
+        val buf = allocator.buffer(numOfRows * field.dataType.defaultSize)
+        var nullCount = 0
+        rows.foreach { row =>
+          if (row.isNullAt(ordinal)) {
+            nullCount += 1
+          } else {
+            getAndSetToArrow(row, buf, field.dataType, ordinal)
+          }
+        }
+
+        val fieldNode = new ArrowFieldNode(numOfRows, nullCount)
+
+        (Array(validity, buf), Array(fieldNode))
+
+      case StringType =>
+        val validityOffset = allocator.buffer(numBytesOfBitmap(numOfRows))
+        val bufOffset = allocator.buffer((numOfRows + 1) * IntegerType.defaultSize)
+        var bytesCount = 0
+        bufOffset.writeInt(bytesCount)  // Start position
+        val validityValues = allocator.buffer(numBytesOfBitmap(numOfRows))
+        val bufValues = allocator.buffer(Int.MaxValue)  // TODO: Reduce the size?
+        var nullCount = 0
+        rows.foreach { row =>
+          if (row.isNullAt(ordinal)) {
+            nullCount += 1
+            bufOffset.writeInt(bytesCount)
+          } else {
+            val bytes = row.getUTF8String(ordinal).getBytes
+            bytesCount += bytes.length
+            bufOffset.writeInt(bytesCount)
+            bufValues.writeBytes(bytes)
+          }
+        }
+
+        val fieldNodeOffset = if (field.nullable) {
+          new ArrowFieldNode(numOfRows, nullCount)
+        } else {
+          new ArrowFieldNode(numOfRows, 0)
+        }
+
+        val fieldNodeValues = new ArrowFieldNode(bytesCount, 0)
+
+        (Array(validityOffset, bufOffset, validityValues, bufValues),
+          Array(fieldNodeOffset, fieldNodeValues))
+    }
   }
 
   /**
@@ -2336,24 +2530,14 @@ class Dataset[T] private[sql](
    */
   private[sql] def internalRowsToArrowRecordBatch(
       rows: Array[InternalRow], allocator: RootAllocator): ArrowRecordBatch = {
-    val numOfRows = rows.length
+    val bufAndField = this.schema.fields.zipWithIndex.map { case (field, ordinal) =>
+      internalRowToArrowBuf(rows, ordinal, field, allocator)
+    }
 
-    val buffers = this.schema.fields.zipWithIndex.flatMap { case (field, idx) =>
-      val validity = internalRowToValidityMap(rows, idx, field, allocator)
-      val buf = allocator.buffer(numOfRows * field.dataType.defaultSize)
-      rows.foreach { row => buf.writeInt(row.getInt(idx)) }
-      Array(validity, buf)
-    }.toList.asJava
+    val buffers = bufAndField.flatMap(_._1).toList.asJava
+    val fieldNodes = bufAndField.flatMap(_._2).toList.asJava
 
-    val fieldNodes = this.schema.fields.zipWithIndex.map { case (field, idx) =>
-      if (field.nullable) {
-        new ArrowFieldNode(numOfRows, 0)
-      } else {
-        new ArrowFieldNode(numOfRows, 0)
-      }
-    }.toList.asJava
-
-    new ArrowRecordBatch(numOfRows, fieldNodes, buffers)
+    new ArrowRecordBatch(rows.length, fieldNodes, buffers)
   }
 
   /**
@@ -2382,7 +2566,7 @@ class Dataset[T] private[sql](
    *
    * The iterator will consume as much memory as the largest partition in this Dataset.
    *
-   * Note: this results in multiple Spark jobs, and if the input Dataset is the result
+   * @note this results in multiple Spark jobs, and if the input Dataset is the result
    * of a wide transformation (e.g. join with different partitioners), to avoid
    * recomputing the input Dataset should be cached first.
    *
@@ -2445,7 +2629,7 @@ class Dataset[T] private[sql](
 
   /**
    * Returns a new Dataset that has exactly `numPartitions` partitions.
-   * Similar to coalesce defined on an [[RDD]], this operation results in a narrow dependency, e.g.
+   * Similar to coalesce defined on an `RDD`, this operation results in a narrow dependency, e.g.
    * if you go from 1000 partitions to 100 partitions, there will not be a shuffle, instead each of
    * the 100 new partitions will claim 10 of the current partitions.
    *
@@ -2460,7 +2644,7 @@ class Dataset[T] private[sql](
    * Returns a new Dataset that contains only the unique rows from this Dataset.
    * This is an alias for `dropDuplicates`.
    *
-   * Note that, equality checking is performed directly on the encoded representation of the data
+   * @note Equality checking is performed directly on the encoded representation of the data
    * and thus is not affected by a custom `equals` function defined on `T`.
    *
    * @group typedrel
@@ -2535,7 +2719,7 @@ class Dataset[T] private[sql](
   def unpersist(): this.type = unpersist(blocking = false)
 
   /**
-   * Represents the content of the Dataset as an [[RDD]] of [[T]].
+   * Represents the content of the Dataset as an `RDD` of [[T]].
    *
    * @group basic
    * @since 1.6.0
@@ -2549,14 +2733,14 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Returns the content of the Dataset as a [[JavaRDD]] of [[T]]s.
+   * Returns the content of the Dataset as a `JavaRDD` of [[T]]s.
    * @group basic
    * @since 1.6.0
    */
   def toJavaRDD: JavaRDD[T] = rdd.toJavaRDD()
 
   /**
-   * Returns the content of the Dataset as a [[JavaRDD]] of [[T]]s.
+   * Returns the content of the Dataset as a `JavaRDD` of [[T]]s.
    * @group basic
    * @since 1.6.0
    */
