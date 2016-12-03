@@ -49,11 +49,9 @@ class DatasetToArrowSuite extends QueryTest with SharedSQLContext {
     super.beforeAll()
     data = Seq.fill(numElements)(ArrowTestClass(
       Random.nextInt, Random.nextDouble, Random.nextString(Random.nextInt(100))))
-
   }
 
   test("Collect as arrow to python") {
-
     val dataset = data.toDS()
 
     val port = dataset.collectAsArrowToPython()
@@ -146,7 +144,7 @@ class RecordBatchReceiver {
     strings
   }
 
-  def array(buf: ArrowBuf): Array[Byte] = {
+  private def array(buf: ArrowBuf): Array[Byte] = {
     val bytes = Array.ofDim[Byte](buf.readableBytes())
     buf.readBytes(bytes)
     bytes
@@ -155,14 +153,9 @@ class RecordBatchReceiver {
   def connectAndRead(port: Int): (Array[Byte], Int) = {
     val clientSocket = new Socket(InetAddress.getByName("localhost"), port)
     val clientDataIns = new DataInputStream(clientSocket.getInputStream)
-
     val messageLength = clientDataIns.readInt()
-
     val buffer = Array.ofDim[Byte](messageLength)
-    val bytesRead = clientDataIns.read(buffer)
-    if (bytesRead != messageLength) {
-      throw new EOFException("Wrong EOF to read Arrow Bytes")
-    }
+    clientDataIns.readFully(buffer, 0, messageLength)
     (buffer, messageLength)
   }
 

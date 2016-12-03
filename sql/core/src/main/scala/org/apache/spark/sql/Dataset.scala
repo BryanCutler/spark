@@ -2402,6 +2402,8 @@ class Dataset[T] private[sql](
         new ArrowType.FloatingPoint(Precision.SINGLE)
       case BooleanType =>
         ArrowType.Bool.INSTANCE
+      case ByteType =>
+        new ArrowType.Int(8, false)
       case _ =>
         throw new IllegalArgumentException(s"Unsupported data type")
     }
@@ -2437,47 +2439,52 @@ class Dataset[T] private[sql](
     Math.ceil(numOfRows / 64.0).toInt * 8
   }
 
+  /**
+   * Get an entry from the InternalRow, and then set to ArrowBuf.
+   * Note: No Null check for the entry.
+   */
   private def getAndSetToArrow(
       row: InternalRow, buf: ArrowBuf, dataType: DataType, ordinal: Int): Unit = {
-    if (row.isNullAt(ordinal)) {
-
-    } else {
-      dataType match {
-        case NullType =>
-        case BooleanType =>
-          buf.writeBoolean(row.getBoolean(ordinal))
-        case ShortType =>
-          buf.writeShort(row.getShort(ordinal))
-        case IntegerType =>
-          buf.writeInt(row.getInt(ordinal))
-        case FloatType =>
-          buf.writeFloat(row.getFloat(ordinal))
-        case DoubleType =>
-          buf.writeDouble(row.getDouble(ordinal))
-        case _ =>
-          throw new UnsupportedOperationException(
-            s"Unsupported data type ${dataType.simpleString}")
-      }
+    dataType match {
+      case NullType =>
+      case BooleanType =>
+        buf.writeBoolean(row.getBoolean(ordinal))
+      case ShortType =>
+        buf.writeShort(row.getShort(ordinal))
+      case IntegerType =>
+        buf.writeInt(row.getInt(ordinal))
+      case FloatType =>
+        buf.writeFloat(row.getFloat(ordinal))
+      case DoubleType =>
+        buf.writeDouble(row.getDouble(ordinal))
+      case ByteType =>
+        buf.writeByte(row.getByte(ordinal))
+      case _ =>
+        throw new UnsupportedOperationException(
+          s"Unsupported data type ${dataType.simpleString}")
     }
   }
 
+  /**
+   * Convert an array of InternalRow to an ArrowBuf.
+   */
   private def internalRowToArrowBuf(
       rows: Array[InternalRow],
-      idx: Int,
+      ordinal: Int,
       field: StructField,
       allocator: RootAllocator): (Array[ArrowBuf], Array[ArrowFieldNode]) = {
     val numOfRows = rows.length
 
     field.dataType match {
-      case IntegerType | DoubleType | FloatType | BooleanType =>
+      case IntegerType | DoubleType | FloatType | BooleanType | ByteType =>
         val validity = allocator.buffer(numBytesOfBitmap(numOfRows))
         val buf = allocator.buffer(numOfRows * field.dataType.defaultSize)
         var nullCount = 0
         rows.foreach { row =>
-          if (row.isNullAt(idx)) {
+          if (row.isNullAt(ordinal)) {
             nullCount += 1
           } else {
-            getAndSetToArrow(row, buf, field.dataType, idx)
+            getAndSetToArrow(row, buf, field.dataType, ordinal)
           }
         }
 
@@ -2494,11 +2501,11 @@ class Dataset[T] private[sql](
         val bufValues = allocator.buffer(Int.MaxValue)  // TODO: Reduce the size?
         var nullCount = 0
         rows.foreach { row =>
-          if (row.isNullAt(idx)) {
+          if (row.isNullAt(ordinal)) {
             nullCount += 1
             bufOffset.writeInt(bytesCount)
           } else {
-            val bytes = row.getUTF8String(idx).getBytes
+            val bytes = row.getUTF8String(ordinal).getBytes
             bytesCount += bytes.length
             bufOffset.writeInt(bytesCount)
             bufValues.writeBytes(bytes)
@@ -2517,13 +2524,14 @@ class Dataset[T] private[sql](
           Array(fieldNodeOffset, fieldNodeValues))
     }
   }
+
   /**
    * Transfer an array of InternalRow to an ArrowRecordBatch.
    */
   private[sql] def internalRowsToArrowRecordBatch(
       rows: Array[InternalRow], allocator: RootAllocator): ArrowRecordBatch = {
-    val bufAndField = this.schema.fields.zipWithIndex.map { case (field, idx) =>
-      internalRowToArrowBuf(rows, idx, field, allocator)
+    val bufAndField = this.schema.fields.zipWithIndex.map { case (field, ordinal) =>
+      internalRowToArrowBuf(rows, ordinal, field, allocator)
     }
 
     val buffers = bufAndField.flatMap(_._1).toList.asJava
