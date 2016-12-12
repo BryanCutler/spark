@@ -1971,12 +1971,27 @@ class ArrowTests(ReusedPySparkTestCase):
         ReusedPySparkTestCase.setUpClass()
         cls.spark = SparkSession(cls.sc)
 
+    def assertFramesEqual(self, df_with_arrow, df_without):
+        msg = ("DataFrame from Arrow is not equal" +
+               ("\n\nWith Arrow:\n%s\n%s" % (df_with_arrow, df_with_arrow.dtypes)) +
+               ("\n\nWithout:\n%s\n%s" % (df_without, df_without.dtypes)))
+        self.assertTrue(df_without.equals(df_with_arrow), msg=msg)
+
     def test_arrow_toPandas(self):
-        schema = StructType().add("key", LongType()).add("value", DoubleType())
-        df = self.spark.createDataFrame([(1, 2.0), (2, 4.0), (3, 6.0), (4, 8.0)], schema=schema)
+        schema = StructType([
+            StructField("str_t", StringType(), True),  # Fails in conversion
+            StructField("int_t", IntegerType(), True),  # Fails, without is converted to int64
+            StructField("long_t", LongType(), True),  # Fails if nullable=False
+            StructField("double_t", DoubleType(), True)])
+        data = [("a", 1, 10, 2.0),
+                ("b", 2, 20, 4.0),
+                ("c", 3, 30, 6.0)]
+
+        df = self.spark.createDataFrame(data, schema=schema)
+        df = df.select("long_t", "double_t")
         pdf = df.toPandas(useArrow=False)
         pdf_arrow = df.toPandas(useArrow=True)
-        self.assertTrue(pdf.equals(pdf_arrow))
+        self.assertFramesEqual(pdf_arrow, pdf)
 
 
 if __name__ == "__main__":
