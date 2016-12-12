@@ -26,10 +26,10 @@ import scala.reflect.runtime.universe.TypeTag
 import scala.util.control.NonFatal
 
 import io.netty.buffer.ArrowBuf
-import org.apache.arrow.flatbuf.Precision
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.file.ArrowWriter
 import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
+import org.apache.arrow.vector.types.FloatingPointPrecision
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, Schema}
 import org.apache.commons.lang3.StringUtils
 
@@ -2292,12 +2292,14 @@ class Dataset[T] private[sql](
     dt match {
       case IntegerType =>
         new ArrowType.Int(8 * IntegerType.defaultSize, true)
+      case LongType =>
+        new ArrowType.Int(8 * LongType.defaultSize, true)
       case StringType =>
         ArrowType.List.INSTANCE
       case DoubleType =>
-        new ArrowType.FloatingPoint(Precision.DOUBLE)
+        new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE)
       case FloatType =>
-        new ArrowType.FloatingPoint(Precision.SINGLE)
+        new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE)
       case BooleanType =>
         ArrowType.Bool.INSTANCE
       case ByteType =>
@@ -2351,6 +2353,8 @@ class Dataset[T] private[sql](
         buf.writeShort(row.getShort(ordinal))
       case IntegerType =>
         buf.writeInt(row.getInt(ordinal))
+      case LongType =>
+        buf.writeLong(row.getLong(ordinal))
       case FloatType =>
         buf.writeFloat(row.getFloat(ordinal))
       case DoubleType =>
@@ -2374,7 +2378,7 @@ class Dataset[T] private[sql](
     val numOfRows = rows.length
 
     field.dataType match {
-      case IntegerType | DoubleType | FloatType | BooleanType | ByteType =>
+      case IntegerType | LongType | DoubleType | FloatType | BooleanType | ByteType =>
         val validity = allocator.buffer(numBytesOfBitmap(numOfRows))
         val buf = allocator.buffer(numOfRows * field.dataType.defaultSize)
         var nullCount = 0

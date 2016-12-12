@@ -1972,8 +1972,8 @@ class ArrowTests(ReusedPySparkTestCase):
         cls.spark = SparkSession(cls.sc)
 
     def test_arrow_toPandas(self):
-        schema = StructType().add("key", IntegerType()).add("value", IntegerType())
-        df = self.spark.createDataFrame([(1, 2), (2, 4), (3, 6), (4, 8)], schema=schema)
+        schema = StructType().add("key", LongType()).add("value", DoubleType())
+        df = self.spark.createDataFrame([(1, 2.0), (2, 4.0), (3, 6.0), (4, 8.0)], schema=schema)
         pdf = df.toPandas(useArrow=False)
         pdf_arrow = df.toPandas(useArrow=True)
         self.assertTrue(pdf.equals(pdf_arrow))
