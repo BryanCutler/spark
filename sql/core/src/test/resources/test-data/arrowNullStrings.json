@@ -1,0 +1,34 @@
+{
+    "schema": {
+        "fields": [
+            {
+                "name": "value",
+                "type": {"name": "utf8"},
+                "nullable": true,
+                "children": [],
+                "typeLayout": {
+                    "vectors": [
+                        {"type": "VALIDITY", "typeBitWidth": 1},
+                        {"type": "OFFSET", "typeBitWidth": 32},
+                        {"type": "DATA", "typeBitWidth": 8}
+                    ]
+                }
+            }
+        ]
+    },
+
+    "batches": [
+        {
+            "count": 6,
+            "columns": [
+                {
+                    "name": "value",
+                    "count": 6,
+                    "VALIDITY": [1, 0, 1, 1, 1, 0],
+                    "OFFSET": [0, 1, 1, 2, 4, 7, 7],
+                    "DATA": ["a", "", "b", "ab", "abc", ""]
+                }
+            ]
+        }
+    ]
+}
