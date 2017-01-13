@@ -73,7 +73,7 @@ object Arrow {
           (row: InternalRow, ordinal: Int, buf: ArrowBuf) => buf.writeFloat(row.getFloat(ordinal)))
       case DoubleType =>
         TypeFuncs(
-          () => new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE),
+          () => new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE),
           (buf: ArrowBuf) => buf.writeDouble(0d),
           (row: InternalRow, ordinal: Int, buf: ArrowBuf) =>
             buf.writeDouble(row.getDouble(ordinal)))
@@ -90,7 +90,7 @@ object Arrow {
             throw new UnsupportedOperationException(err))
       case StructType(_) =>
         TypeFuncs(
-          () => ArrowType.Utf8.INSTANCE,
+          () => ArrowType.Struct.INSTANCE,
           (buf: ArrowBuf) => throw new UnsupportedOperationException(err),  // TODO
           (row: InternalRow, ordinal: Int, buf: ArrowBuf) =>
             throw new UnsupportedOperationException(err))
