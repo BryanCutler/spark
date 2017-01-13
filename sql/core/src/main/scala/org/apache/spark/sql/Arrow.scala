@@ -99,13 +99,6 @@ object Arrow {
     }
   }
 
-  private case class BoundColumn(fill: () => Unit, write: InternalRow => Unit)
-
-  private def bindColumn(dataType: DataType, ordinal: Int, buf: ArrowBuf): BoundColumn = {
-      val tf = getTypeFuncs(dataType)
-      BoundColumn(() => tf.fill(buf), (row: InternalRow) => tf.write(row, ordinal, buf))
-  }
-
   /**
    * Transfer an array of InternalRow to an ArrowRecordBatch.
    */
@@ -141,7 +134,7 @@ object Arrow {
         validityMutator.setValueCount(numOfRows)
 
         val buf = allocator.buffer(numOfRows * field.dataType.defaultSize)
-        val boundColumn = bindColumn(field.dataType, ordinal, buf)
+        val typeFunc = getTypeFuncs(field.dataType)
         var nullCount = 0
         var index = 0
         while (index < rows.length) {
@@ -149,10 +142,10 @@ object Arrow {
           if (row.isNullAt(ordinal)) {
             nullCount += 1
             validityMutator.set(index, 0)
-            boundColumn.fill()
+            typeFunc.fill(buf)
           } else {
             validityMutator.set(index, 1)
-            boundColumn.write(row)
+            typeFunc.write(row, ordinal, buf)
           }
           index += 1
         }
