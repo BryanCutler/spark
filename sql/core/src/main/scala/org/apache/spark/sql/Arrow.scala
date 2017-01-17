@@ -53,7 +53,7 @@ object Arrow {
             buf.writeBoolean(row.getBoolean(ordinal)))
       case ShortType =>
         TypeFuncs(
-          () => new ArrowType.Int(4 * ShortType.defaultSize, true), // TODO - check on this
+          () => new ArrowType.Int(8 * ShortType.defaultSize, true),
           (buf: ArrowBuf) => buf.writeShort(0),
           (row: InternalRow, ordinal: Int, buf: ArrowBuf) => buf.writeShort(row.getShort(ordinal)))
       case IntegerType =>
