@@ -22,7 +22,7 @@ import scala.language.implicitConversions
 
 import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.{BaseAllocator, RootAllocator}
-import org.apache.arrow.vector.{BaseDataValueVector, BitVector, IntVector, VarBinaryVector}
+import org.apache.arrow.vector._
 import org.apache.arrow.vector.BaseValueVector.BaseMutator
 import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
 import org.apache.arrow.vector.types.FloatingPointPrecision
@@ -37,7 +37,7 @@ object Arrow {
   private def sparkTypeToArrowType(dataType: DataType): ArrowType = {
     dataType match {
       case BooleanType => ArrowType.Bool.INSTANCE
-      case ShortType => new ArrowType.Int(4 * ShortType.defaultSize, true) // TODO - check on this
+      case ShortType => new ArrowType.Int(8 * ShortType.defaultSize, true)
       case IntegerType => new ArrowType.Int(8 * IntegerType.defaultSize, true)
       case LongType => new ArrowType.Int(8 * LongType.defaultSize, true)
       case FloatType => new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE)
@@ -49,10 +49,16 @@ object Arrow {
   }
 
   private def schemaToColumnWriter(allocator: RootAllocator, dataType: DataType): ColumnWriter = {
-    // TODO: Implement more types
     dataType match {
+      case BooleanType => new BooleanColumnWriter(allocator)
+      case ShortType => new ShortColumnWriter(allocator)
       case IntegerType => new IntegerColumnWriter(allocator)
+      case LongType => new LongColumnWriter(allocator)
+      case FloatType => new FloatColumnWriter(allocator)
+      case DoubleType => new DoubleColumnWriter(allocator)
+      case ByteType => new ByteColumnWriter(allocator)
       case StringType => new UTF8StringColumnWriter(allocator)
+      case _ => throw new UnsupportedOperationException(s"Unsupported data type: ${dataType}")
     }
   }
 
@@ -120,8 +126,6 @@ trait ColumnWriter {
  * Base class for flat arrow column writer, i.e., column without children.
  */
 abstract class PrimitiveColumnWriter(protected val allocator: BaseAllocator) extends ColumnWriter {
-  protected val validityVector = new BitVector("validity", allocator)
-  protected val validityMutator = validityVector.getMutator
   protected val valueVector: BaseDataValueVector
   protected val valueMutator: BaseMutator
 
@@ -130,52 +134,113 @@ abstract class PrimitiveColumnWriter(protected val allocator: BaseAllocator) ext
 
   protected def writeNull()
   protected def writeData(data: Any)
-  protected def valueBufs(): Seq[ArrowBuf] = List(valueVector.getBuffer)
+  protected def valueBuffers(): Seq[ArrowBuf]
+  = valueVector.getBuffers(true) // TODO: check the flag
 
   override def init(initialSize: Int): Unit = {
-    validityVector.allocateNew(initialSize)
     valueVector.allocateNew()
   }
 
   override def write(data: Any): Unit = {
     if (data == null) {
-      validityMutator.setSafe(count, 0)
       writeNull()
       nullCount += 1
     } else {
-      validityMutator.setSafe(count, 1)
       writeData(data)
     }
-
     count += 1
   }
 
   override def finish(): (Seq[ArrowFieldNode], Seq[ArrowBuf]) = {
-    validityMutator.setValueCount(count)
     valueMutator.setValueCount(count)
-
     val fieldNode = new ArrowFieldNode(count, nullCount)
-    (List(fieldNode), validityVector.getBuffer +: valueBufs)
+    (List(fieldNode), valueBuffers)
   }
 }
 
-class IntegerColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
-  override protected val valueVector: IntVector = new IntVector("IntValue", allocator)
-  override protected val valueMutator: IntVector#Mutator = valueVector.getMutator
+class BooleanColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
+  implicit def bool2int(b: Boolean): Int = if (b) 1 else 0
 
-  override protected def writeNull(): Unit = valueMutator.set(count, 0)
+  override protected val valueVector: NullableBitVector
+  = new NullableBitVector("BooleanValue", allocator)
+  override protected val valueMutator: NullableBitVector#Mutator = valueVector.getMutator
+
+  override protected def writeNull(): Unit = valueMutator.setNull(count)
+  override protected def writeData(data: Any): Unit
+  = valueMutator.setSafe(count, data.asInstanceOf[Boolean])
+}
+
+class ShortColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableSmallIntVector
+  = new NullableSmallIntVector("ShortValue", allocator)
+  override protected val valueMutator: NullableSmallIntVector#Mutator = valueVector.getMutator
+
+  override protected def writeNull(): Unit = valueMutator.setNull(count)
+  override protected def writeData(data: Any): Unit
+  = valueMutator.setSafe(count, data.asInstanceOf[Short])
+}
+
+class IntegerColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableIntVector
+  = new NullableIntVector("IntValue", allocator)
+  override protected val valueMutator: NullableIntVector#Mutator = valueVector.getMutator
+
+  override protected def writeNull(): Unit = valueMutator.setNull(count)
   override protected def writeData(data: Any): Unit
   = valueMutator.setSafe(count, data.asInstanceOf[Int])
 }
 
-class UTF8StringColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
-  override protected val valueVector: VarBinaryVector
-  = new VarBinaryVector("UTF8StringValue", allocator)
-  override protected val valueMutator: VarBinaryVector#Mutator = valueVector.getMutator
+class LongColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableBigIntVector
+  = new NullableBigIntVector("LongValue", allocator)
+  override protected val valueMutator: NullableBigIntVector#Mutator = valueVector.getMutator
 
-  override protected def writeNull(): Unit = valueMutator.setSafe(count, Array.empty[Byte])
+  override protected def writeNull(): Unit = valueMutator.setNull(count)
   override protected def writeData(data: Any): Unit
-  = valueMutator.setSafe(count, data.asInstanceOf[UTF8String].getBytes)
-  override protected def valueBufs(): Seq[ArrowBuf]
-  = List(valueVector.getOffsetVector.getBuffer, valueVector.getBuffer)
+  = valueMutator.setSafe(count, data.asInstanceOf[Long])
+}
+
+class FloatColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableFloat4Vector
+  = new NullableFloat4Vector("FloatValue", allocator)
+  override protected val valueMutator: NullableFloat4Vector#Mutator
+  = valueVector.getMutator
+
+  override protected def writeNull(): Unit = valueMutator.setNull(count)
+  override protected def writeData(data: Any): Unit
+  = valueMutator.setSafe(count, data.asInstanceOf[Float])
+}
+
+class DoubleColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableFloat8Vector
+  = new NullableFloat8Vector("DoubleValue", allocator)
+  override protected val valueMutator: NullableFloat8Vector#Mutator
+  = valueVector.getMutator
+
+  override protected def writeNull(): Unit = valueMutator.setNull(count)
+  override protected def writeData(data: Any): Unit
+  = valueMutator.setSafe(count, data.asInstanceOf[Double])
+}
+
+class ByteColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableUInt1Vector
+  = new NullableUInt1Vector("ByteValue", allocator)
+  override protected val valueMutator: NullableUInt1Vector#Mutator = valueVector.getMutator
+
+  override protected def writeNull(): Unit = valueMutator.setNull(count)
+  override protected def writeData(data: Any): Unit
+  = valueMutator.setSafe(count, data.asInstanceOf[Byte])
+}
+
+class UTF8StringColumnWriter(allocator: BaseAllocator) extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableVarBinaryVector
+  = new NullableVarBinaryVector("UTF8StringValue", allocator)
+  override protected val valueMutator: NullableVarBinaryVector#Mutator
+  = valueVector.getMutator
+
+  override protected def writeNull(): Unit = valueMutator.setNull(count)
+  override protected def writeData(data: Any): Unit = {
+    val bytes = data.asInstanceOf[UTF8String].getBytes
+    valueMutator.setSafe(count, bytes, 0, bytes.length)
+  }
 }
