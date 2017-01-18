@@ -127,7 +127,7 @@ object Arrow {
     val numOfRows = rows.length
 
     field.dataType match {
-      case IntegerType | LongType | DoubleType | FloatType | BooleanType | ByteType =>
+      case ShortType | IntegerType | LongType | DoubleType | FloatType | BooleanType | ByteType =>
         val validityVector = new BitVector("validity", allocator)
         val validityMutator = validityVector.getMutator
         validityVector.allocateNew(numOfRows)
