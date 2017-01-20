@@ -3,7 +3,7 @@
         "fields": [
             {
                 "name": "a_byte",
-                "type": {"name": "int", "isSigned": false, "bitWidth": 8},
+                "type": {"name": "int", "isSigned": true, "bitWidth": 8},
                 "nullable": false,
                 "children": [],
                 "typeLayout": {
@@ -18,13 +18,13 @@
 
     "batches": [
         {
-            "count": 3,
+            "count": 4,
             "columns": [
                 {
                     "name": "a_byte",
-                    "count": 3,
-                    "VALIDITY": [1, 1, 1],
-                    "DATA": [1, 64, 127]
+                    "count": 4,
+                    "VALIDITY": [1, 1, 1, 1],
+                    "DATA": [1, -1, 64, 127]
                 }
             ]
         }

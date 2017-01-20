@@ -71,7 +71,7 @@ class ArrowSuite extends SharedSQLContext {
   }
 
   test("byte type conversion") {
-    val byteData = Seq(1.toByte, 64.toByte, Byte.MaxValue).toDF("a_byte")
+    val byteData = Seq(1.toByte, (-1).toByte, 64.toByte, Byte.MaxValue).toDF("a_byte")
     collectAndValidate(byteData, "test-data/arrow/byteData.json")
   }
 
