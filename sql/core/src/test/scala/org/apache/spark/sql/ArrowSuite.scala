@@ -70,6 +70,11 @@ class ArrowSuite extends SharedSQLContext {
     collectAndValidate(boolData, "test-data/arrow/boolData.json")
   }
 
+  test("byte type conversion") {
+    val byteData = Seq(1.toByte, 64.toByte, Byte.MaxValue).toDF("a_byte")
+    collectAndValidate(byteData, "test-data/arrow/byteData.json")
+  }
+
   test("mixed standard type nullable conversion") {
     val mixedData = Seq(shortData, intData, longData, floatData, doubleData)
       .reduce((a, b) => a.join(b, "i")).sort("i")

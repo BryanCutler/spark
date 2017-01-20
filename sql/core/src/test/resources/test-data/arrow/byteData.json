@@ -1,0 +1,32 @@
+{
+    "schema": {
+        "fields": [
+            {
+                "name": "a_byte",
+                "type": {"name": "int", "isSigned": false, "bitWidth": 8},
+                "nullable": false,
+                "children": [],
+                "typeLayout": {
+                    "vectors": [
+                        {"type": "VALIDITY", "typeBitWidth": 1},
+                        {"type": "DATA", "typeBitWidth": 8}
+                    ]
+                }
+            }
+        ]
+    },
+
+    "batches": [
+        {
+            "count": 3,
+            "columns": [
+                {
+                    "name": "a_byte",
+                    "count": 3,
+                    "VALIDITY": [1, 1, 1],
+                    "DATA": [1, 64, 127]
+                }
+            ]
+        }
+    ]
+}
