@@ -25,7 +25,7 @@ import org.apache.arrow.memory.{BaseAllocator, RootAllocator}
 import org.apache.arrow.vector._
 import org.apache.arrow.vector.BaseValueVector.BaseMutator
 import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
-import org.apache.arrow.vector.types.FloatingPointPrecision
+import org.apache.arrow.vector.types.{FloatingPointPrecision, TimeUnit}
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, Schema}
 
 import org.apache.spark.sql.catalyst.InternalRow
@@ -43,6 +43,9 @@ object Arrow {
       case DoubleType => new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE)
       case ByteType => new ArrowType.Int(8, true)
       case StringType => ArrowType.Utf8.INSTANCE
+      case BinaryType => ArrowType.Binary.INSTANCE
+      case DateType => ArrowType.Date.INSTANCE
+      case TimestampType => new ArrowType.Timestamp(TimeUnit.MILLISECOND)
       case _ => throw new UnsupportedOperationException(s"Unsupported data type: ${dataType}")
     }
   }
@@ -61,7 +64,10 @@ object Arrow {
     val fieldNodes = bufAndField.flatMap(_._1).toList.asJava
     val buffers = bufAndField.flatMap(_._2).toList.asJava
 
-    new ArrowRecordBatch(rows.length, fieldNodes, buffers)
+    val recordBatch = new ArrowRecordBatch(rows.length, fieldNodes, buffers)
+    buffers.asScala.foreach(_.release())
+
+    recordBatch
   }
 
   /**
@@ -115,6 +121,9 @@ object ColumnWriter {
       case DoubleType => new DoubleColumnWriter(allocator)
       case ByteType => new ByteColumnWriter(allocator)
       case StringType => new UTF8StringColumnWriter(allocator)
+      case BinaryType => new BinaryColumnWriter(allocator)
+      case DateType => new DateColumnWriter(allocator)
+      case TimestampType => new TimeStampColumnWriter(allocator)
       case _ => throw new UnsupportedOperationException(s"Unsupported data type: ${dataType}")
     }
   }
@@ -124,6 +133,11 @@ private[sql] trait ColumnWriter {
   def init(initialSize: Int): Unit
   def writeNull(): Unit
   def write(row: InternalRow, ordinal: Int): Unit
+
+  /**
+   * Clear the column writer and return the ArrowFieldNode and ArrowBuf.
+   * This should be called only once after all the data is written.
+   */
   def finish(): (Seq[ArrowFieldNode], Seq[ArrowBuf])
 }
 
@@ -140,7 +154,7 @@ private[sql] abstract class PrimitiveColumnWriter(protected val allocator: BaseA
 
   protected def setNull(): Unit
   protected def setValue(row: InternalRow, ordinal: Int): Unit
-  protected def valueBuffers(): Seq[ArrowBuf] = valueVector.getBuffers(true) // TODO: check the flag
+  protected def valueBuffers(): Seq[ArrowBuf] = valueVector.getBuffers(true)
 
   override def init(initialSize: Int): Unit = {
     valueVector.allocateNew()
@@ -253,5 +267,42 @@ private[sql] class UTF8StringColumnWriter(allocator: BaseAllocator)
   override def setValue(row: InternalRow, ordinal: Int): Unit = {
     val bytes = row.getUTF8String(ordinal).getBytes
     valueMutator.setSafe(count, bytes, 0, bytes.length)
+  }
+}
+
+private[sql] class BinaryColumnWriter(allocator: BaseAllocator)
+    extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableVarBinaryVector
+  = new NullableVarBinaryVector("UTF8StringValue", allocator)
+  override protected val valueMutator: NullableVarBinaryVector#Mutator = valueVector.getMutator
+
+  override def setNull(): Unit = valueMutator.setNull(count)
+  override def setValue(row: InternalRow, ordinal: Int): Unit = {
+    val bytes = row.getBinary(ordinal)
+    valueMutator.setSafe(count, bytes, 0, bytes.length)
+  }
+}
+
+private[sql] class DateColumnWriter(allocator: BaseAllocator)
+    extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableDateVector
+  = new NullableDateVector("DateValue", allocator)
+  override protected val valueMutator: NullableDateVector#Mutator = valueVector.getMutator
+
+  override protected def setNull(): Unit = valueMutator.setNull(count)
+  override protected def setValue(row: InternalRow, ordinal: Int): Unit = {
+    valueMutator.setSafe(count, row.getInt(ordinal).toLong * 24 * 3600 * 1000)
+  }
+}
+
+private[sql] class TimeStampColumnWriter(allocator: BaseAllocator)
+    extends PrimitiveColumnWriter(allocator) {
+  override protected val valueVector: NullableTimeStampVector
+  = new NullableTimeStampVector("TimeStampValue", allocator)
+  override protected val valueMutator: NullableTimeStampVector#Mutator = valueVector.getMutator
+
+  override protected def setNull(): Unit = valueMutator.setNull(count)
+  override protected def setValue(row: InternalRow, ordinal: Int): Unit = {
+    valueMutator.setSafe(count, row.getLong(ordinal) / 1000)
   }
 }
