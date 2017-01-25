@@ -180,7 +180,7 @@ class ArrowSuite extends SharedSQLContext {
     val jsonSchema = jsonReader.start()
     Validator.compareSchemas(arrowSchema, jsonSchema)
 
-    val arrowRecordBatch = df.collectAsArrow(allocator)
+    val arrowRecordBatch = df.collectAsArrow(Some(allocator))
     val arrowRoot = new VectorSchemaRoot(arrowSchema, allocator)
     val vectorLoader = new VectorLoader(arrowRoot)
     vectorLoader.load(arrowRecordBatch)
