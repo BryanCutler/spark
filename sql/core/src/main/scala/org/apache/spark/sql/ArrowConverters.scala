@@ -18,7 +18,6 @@
 package org.apache.spark.sql
 
 import scala.collection.JavaConverters._
-import scala.language.implicitConversions
 
 import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.{BaseAllocator, RootAllocator}
@@ -49,7 +48,7 @@ object ArrowConverters {
       case BinaryType => ArrowType.Binary.INSTANCE
       case DateType => ArrowType.Date.INSTANCE
       case TimestampType => new ArrowType.Timestamp(TimeUnit.MILLISECOND)
-      case _ => throw new UnsupportedOperationException(s"Unsupported data type: ${dataType}")
+      case _ => throw new UnsupportedOperationException(s"Unsupported data type: $dataType")
     }
   }
 

@@ -19,7 +19,7 @@ package org.apache.spark.sql
 import java.io.File
 import java.sql.{Date, Timestamp}
 import java.text.SimpleDateFormat
-import java.util.{Locale, TimeZone}
+import java.util.Locale
 
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.{VectorLoader, VectorSchemaRoot}
@@ -27,7 +27,6 @@ import org.apache.arrow.vector.file.json.JsonFileReader
 import org.apache.arrow.vector.util.Validator
 
 import org.apache.spark.sql.test.SharedSQLContext
-import org.apache.spark.unsafe.types.CalendarInterval
 
 
 // NOTE - nullable type can be declared as Option[*] or java.lang.*
