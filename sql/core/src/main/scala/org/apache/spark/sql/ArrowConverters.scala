@@ -31,7 +31,7 @@ import org.apache.arrow.vector.types.pojo.{ArrowType, Field, Schema}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types._
 
-object Arrow {
+object ArrowConverters {
 
   /**
    * Map a Spark Dataset type to ArrowType.

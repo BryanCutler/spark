@@ -2380,7 +2380,7 @@ class Dataset[T] private[sql](
     withNewExecutionId {
       try {
         val collectedRows = queryExecution.executedPlan.executeCollect()
-        val recordBatch = Arrow.internalRowsToArrowRecordBatch(
+        val recordBatch = ArrowConverters.internalRowsToArrowRecordBatch(
           collectedRows, this.schema, allocator)
         recordBatch
       } catch {
@@ -2764,7 +2764,7 @@ class Dataset[T] private[sql](
    */
   private[sql] def collectAsArrowToPython(): Int = {
     val recordBatch = collectAsArrow()
-    val arrowSchema = Arrow.schemaToArrowSchema(this.schema)
+    val arrowSchema = ArrowConverters.schemaToArrowSchema(this.schema)
     val out = new ByteArrayOutputStream()
     try {
       val writer = new ArrowWriter(Channels.newChannel(out), arrowSchema)

@@ -38,7 +38,7 @@ private[sql] case class FloatData(i: Int, a_f: Float, b_f: Option[Float])
 private[sql] case class DoubleData(i: Int, a_d: Double, b_d: Option[Double])
 
 
-class ArrowSuite extends SharedSQLContext {
+class ArrowConvertersSuite extends SharedSQLContext {
   import testImplicits._
 
   private def testFile(fileName: String): String = {
@@ -166,7 +166,7 @@ class ArrowSuite extends SharedSQLContext {
     val allocator = new RootAllocator(Integer.MAX_VALUE)
     val jsonReader = new JsonFileReader(new File(jsonFilePath), allocator)
 
-    val arrowSchema = Arrow.schemaToArrowSchema(df.schema)
+    val arrowSchema = ArrowConverters.schemaToArrowSchema(df.schema)
     val jsonSchema = jsonReader.start()
     Validator.compareSchemas(arrowSchema, jsonSchema)
 
