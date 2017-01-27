@@ -255,7 +255,7 @@ private[sql] class UTF8StringColumnWriter(allocator: BaseAllocator)
 private[sql] class BinaryColumnWriter(allocator: BaseAllocator)
     extends PrimitiveColumnWriter(allocator) {
   override protected val valueVector: NullableVarBinaryVector
-    = new NullableVarBinaryVector("UTF8StringValue", allocator)
+    = new NullableVarBinaryVector("BinaryValue", allocator)
   override protected val valueMutator: NullableVarBinaryVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -273,6 +273,7 @@ private[sql] class DateColumnWriter(allocator: BaseAllocator)
 
   override protected def setNull(): Unit = valueMutator.setNull(count)
   override protected def setValue(row: InternalRow, ordinal: Int): Unit = {
+    // TODO: comment on diff btw value representations of date/timestamp
     valueMutator.setSafe(count, row.getInt(ordinal).toLong * 24 * 3600 * 1000)
   }
 }
@@ -286,6 +287,7 @@ private[sql] class TimeStampColumnWriter(allocator: BaseAllocator)
   override protected def setNull(): Unit = valueMutator.setNull(count)
 
   override protected def setValue(row: InternalRow, ordinal: Int): Unit = {
+    // TODO: use microsecond timestamp when ARROW-477 is resolved
     valueMutator.setSafe(count, row.getLong(ordinal) / 1000)
   }
 }
