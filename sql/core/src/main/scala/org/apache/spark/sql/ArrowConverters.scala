@@ -17,12 +17,16 @@
 
 package org.apache.spark.sql
 
+import java.io.ByteArrayOutputStream
+import java.nio.channels.Channels
+
 import scala.collection.JavaConverters._
 
 import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.{BaseAllocator, RootAllocator}
 import org.apache.arrow.vector._
 import org.apache.arrow.vector.BaseValueVector.BaseMutator
+import org.apache.arrow.vector.file.ArrowWriter
 import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
 import org.apache.arrow.vector.types.{FloatingPointPrecision, TimeUnit}
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, Schema}
@@ -30,6 +34,31 @@ import org.apache.arrow.vector.types.pojo.{ArrowType, Field, Schema}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types._
 
+/**
+ * Intermediate data structure returned from Arrow conversions
+ */
+private[sql] abstract class ArrowPayload extends Iterator[ArrowRecordBatch]
+
+/**
+ * Class that wraps an Arrow RootAllocator used in conversion
+ */
+private[sql] class ArrowConverters {
+  private val _allocator = new RootAllocator(Long.MaxValue)
+
+  private[sql] def allocator: RootAllocator = _allocator
+
+  private class ArrowStaticPayload(batches: ArrowRecordBatch*) extends ArrowPayload {
+    private val iter = batches.iterator
+
+    override def next(): ArrowRecordBatch = iter.next()
+    override def hasNext: Boolean = iter.hasNext
+  }
+
+  def internalRowsToPayload(rows: Array[InternalRow], schema: StructType): ArrowPayload = {
+    val batch = ArrowConverters.internalRowsToArrowRecordBatch(rows, schema, allocator)
+    new ArrowStaticPayload(batch)
+  }
+}
 
 private[sql] object ArrowConverters {
 
@@ -108,6 +137,25 @@ private[sql] object ArrowConverters {
       new Field(f.name, f.nullable, sparkTypeToArrowType(f.dataType), List.empty[Field].asJava)
     }
     new Schema(arrowFields.toList.asJava)
+  }
+
+  /**
+   * Write an ArrowPayload to a byte array
+   */
+  private[sql] def payloadToByteArray(payload: ArrowPayload, schema: StructType): Array[Byte] = {
+    val arrowSchema = ArrowConverters.schemaToArrowSchema(schema)
+    val out = new ByteArrayOutputStream()
+    val writer = new ArrowWriter(Channels.newChannel(out), arrowSchema)
+    try {
+      payload.foreach(writer.writeRecordBatch)
+    } catch {
+      case e: Exception =>
+        throw e
+    } finally {
+      writer.close()
+      payload.foreach(_.close())
+    }
+    out.toByteArray
   }
 }
 
