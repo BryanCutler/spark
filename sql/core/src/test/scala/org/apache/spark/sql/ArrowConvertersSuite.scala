@@ -39,12 +39,19 @@ private[sql] case class DoubleData(i: Int, a_d: Double, b_d: Option[Double])
 class ArrowConvertersSuite extends SharedSQLContext {
   import testImplicits._
 
+  private def collectAsArrow(df: DataFrame,
+                             converter: Option[ArrowConverters] = None): ArrowPayload = {
+    val cnvtr = converter.getOrElse(new ArrowConverters)
+    val payloadByteArrays = df.toArrowPayloadBytes().collect()
+    cnvtr.readPayloadByteArrays(payloadByteArrays)
+  }
+
   private def testFile(fileName: String): String = {
     Thread.currentThread().getContextClassLoader.getResource(fileName).getFile
   }
 
   test("collect to arrow record batch") {
-    val arrowPayload = indexData.collectAsArrow()
+    val arrowPayload = collectAsArrow(indexData)
     assert(arrowPayload.nonEmpty)
     // TODO - make sure only one partition?
     arrowPayload.foreach(arrowRecordBatch => assert(arrowRecordBatch.getLength > 0))
@@ -124,7 +131,7 @@ class ArrowConvertersSuite extends SharedSQLContext {
   }
 
   test("empty frame collect") {
-    val arrowPayload = spark.emptyDataFrame.collectAsArrow()
+    val arrowPayload = collectAsArrow(spark.emptyDataFrame)
     assert(arrowPayload.isEmpty)
     // TODO: test empty partitions
   }
@@ -172,7 +179,7 @@ class ArrowConvertersSuite extends SharedSQLContext {
     Validator.compareSchemas(arrowSchema, jsonSchema)
 
     // TODO: repartition because can only validate one batch
-    val arrowPayload = df.repartition(1).collectAsArrow(Some(converter))
+    val arrowPayload = collectAsArrow(df.repartition(1), Some(converter))
     val arrowRoot = new VectorSchemaRoot(arrowSchema, converter.allocator)
     val vectorLoader = new VectorLoader(arrowRoot)
     arrowPayload.foreach(vectorLoader.load)

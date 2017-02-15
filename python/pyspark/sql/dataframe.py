@@ -394,7 +394,7 @@ class DataFrame(object):
     @ignore_unicode_prefix
     @since(2.0)
     def collectAsArrow(self):
-        """Returns all the records as an ArrowRecordBatch
+        """Returns all records as list of deserialized ArrowPayloads
         """
         with SCCallSiteSync(self._sc) as css:
             port = self._jdf.collectAsArrowToPython()

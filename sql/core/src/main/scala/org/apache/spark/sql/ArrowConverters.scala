@@ -36,8 +36,12 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types._
 
 
-//////////////////////
-private[sql] class ByteArrayReadableSeekableByteChannel(var byteArray: Array[Byte]) extends SeekableByteChannel {
+/**
+ * ArrowReader requires a seekable byte channel.
+ * NOTE - this is taken from test org.apache.vector.file, see about moving to public util pkg
+ */
+private[sql] class ByteArrayReadableSeekableByteChannel(var byteArray: Array[Byte])
+  extends SeekableByteChannel {
   var _position: Long = 0L
 
   override def isOpen: Boolean = {
@@ -75,19 +79,11 @@ private[sql] class ByteArrayReadableSeekableByteChannel(var byteArray: Array[Byt
     throw new UnsupportedOperationException("Read Only")
   }
 }
-//////////////////////
 
 /**
  * Intermediate data structure returned from Arrow conversions
  */
 private[sql] abstract class ArrowPayload extends Iterator[ArrowRecordBatch]
-
-private[sql] class ArrowStaticPayload(batches: ArrowRecordBatch*) extends ArrowPayload {
-  private val iter = batches.iterator
-
-  override def next(): ArrowRecordBatch = iter.next()
-  override def hasNext: Boolean = iter.hasNext
-}
 
 /**
  * Class that wraps an Arrow RootAllocator used in conversion
@@ -97,17 +93,31 @@ private[sql] class ArrowConverters {
 
   private[sql] def allocator: RootAllocator = _allocator
 
+  private class ArrowStaticPayload(batches: ArrowRecordBatch*) extends ArrowPayload {
+    private val iter = batches.iterator
+
+    override def next(): ArrowRecordBatch = iter.next()
+    override def hasNext: Boolean = iter.hasNext
+  }
+
   def interalRowIterToPayload(rowIter: Iterator[InternalRow], schema: StructType): ArrowPayload = {
     val batch = ArrowConverters.internalRowIterToArrowBatch(rowIter, schema, allocator)
     new ArrowStaticPayload(batch)
   }
 
-  private[sql] def readBatchBytes(batchBytes: Array[Byte]): Array[ArrowRecordBatch] = {
-    val in = new ByteArrayReadableSeekableByteChannel(batchBytes)
-    val reader = new ArrowReader(in, _allocator)
-    val footer = reader.readFooter()
-    val batchBlocks = footer.getRecordBatches.asScala.toArray
-    batchBlocks.map(block => reader.readRecordBatch(block))
+  def readPayloadByteArrays(payloadByteArrays: Array[Array[Byte]]): ArrowPayload = {
+    val batches = scala.collection.mutable.ArrayBuffer.empty[ArrowRecordBatch]
+    var i = 0
+    while (i < payloadByteArrays.length) {
+      val payloadBytes = payloadByteArrays(i)
+      val in = new ByteArrayReadableSeekableByteChannel(payloadBytes)
+      val reader = new ArrowReader(in, _allocator)
+      val footer = reader.readFooter()
+      val batchBlocks = footer.getRecordBatches.asScala.toArray
+      batchBlocks.foreach(block => batches += reader.readRecordBatch(block))
+      i += 1
+    }
+    new ArrowStaticPayload(batches: _*)
   }
 }
 
