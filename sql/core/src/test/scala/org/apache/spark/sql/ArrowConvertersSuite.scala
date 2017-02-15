@@ -24,6 +24,7 @@ import java.util.Locale
 import org.apache.arrow.vector.{VectorLoader, VectorSchemaRoot}
 import org.apache.arrow.vector.file.json.JsonFileReader
 import org.apache.arrow.vector.util.Validator
+import org.apache.spark.SparkException
 
 import org.apache.spark.sql.test.SharedSQLContext
 
@@ -113,11 +114,14 @@ class ArrowConvertersSuite extends SharedSQLContext {
     collectAndValidate(binaryData, "test-data/arrow/binaryData.json")
   }
 
-  test("nested type conversion") { }
+  // Type not yet supported
+  ignore("nested type conversion") { }
 
-  test("array type conversion") { }
+  // Type not yet supported
+  ignore("array type conversion") { }
 
-  test("mapped type conversion") { }
+  // Type not yet supported
+  ignore("mapped type conversion") { }
 
   test("floating-point NaN") {
     val nanData = Seq((1, 1.2F, Double.NaN), (2, Float.NaN, 1.23)).toDF("i", "NaN_f", "NaN_d")
@@ -138,15 +142,17 @@ class ArrowConvertersSuite extends SharedSQLContext {
 
   test("unsupported types") {
     def runUnsupported(block: => Unit): Unit = {
-      val msg = intercept[UnsupportedOperationException] {
+      val msg = intercept[SparkException] {
         block
       }
       assert(msg.getMessage.contains("Unsupported data type"))
+      assert(msg.getCause.getClass === classOf[UnsupportedOperationException])
     }
 
-    runUnsupported {
-      collectAndValidate(decimalData, "test-data/arrow/decimalData-BigDecimal.json")
-    }
+    runUnsupported { collectAsArrow(decimalData) }
+    runUnsupported { collectAsArrow(arrayData.toDF()) }
+    runUnsupported { collectAsArrow(mapData.toDF()) }
+    runUnsupported { collectAsArrow(complexData) }
   }
 
   test("test Arrow Validator") {
