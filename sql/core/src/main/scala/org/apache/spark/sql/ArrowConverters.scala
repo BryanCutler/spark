@@ -159,7 +159,7 @@ private[sql] object ArrowConverters {
     val fieldAndBuf = columnWriters.map { writer =>
       writer.finish()
     }.unzip
-    val fieldNodes = fieldAndBuf._1.flatten
+    val fieldNodes = fieldAndBuf._1
     val buffers = fieldAndBuf._2.flatten
 
     val rowLength = if(fieldNodes.nonEmpty) fieldNodes.head.getLength else 0
@@ -209,7 +209,7 @@ private[sql] trait ColumnWriter {
    * Clear the column writer and return the ArrowFieldNode and ArrowBuf.
    * This should be called only once after all the data is written.
    */
-  def finish(): (Seq[ArrowFieldNode], Seq[ArrowBuf])
+  def finish(): (ArrowFieldNode, Array[ArrowBuf])
 }
 
 /**
@@ -243,11 +243,11 @@ private[sql] abstract class PrimitiveColumnWriter(
     count += 1
   }
 
-  override def finish(): (Seq[ArrowFieldNode], Seq[ArrowBuf]) = {
+  override def finish(): (ArrowFieldNode, Array[ArrowBuf]) = {
     valueMutator.setValueCount(count)
     val fieldNode = new ArrowFieldNode(count, nullCount)
-    val valueBuffers: Seq[ArrowBuf] = valueVector.getBuffers(true)
-    (List(fieldNode), valueBuffers)
+    val valueBuffers = valueVector.getBuffers(true)
+    (fieldNode, valueBuffers)
   }
 }
 
