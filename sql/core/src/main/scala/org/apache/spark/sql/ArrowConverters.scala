@@ -227,13 +227,13 @@ private[sql] trait ColumnWriter {
  */
 private[sql] abstract class PrimitiveColumnWriter(
   val ordinal: Int,
-  protected val allocator: BaseAllocator)
+  val allocator: BaseAllocator)
     extends ColumnWriter {
-  protected def valueVector: BaseDataValueVector
-  protected def valueMutator: BaseMutator
+  def valueVector: BaseDataValueVector
+  def valueMutator: BaseMutator
 
-  protected def setNull(): Unit
-  protected def setValue(row: InternalRow, ordinal: Int): Unit
+  def setNull(): Unit
+  def setValue(row: InternalRow, ordinal: Int): Unit
 
   protected var count = 0
   protected var nullCount = 0
@@ -265,9 +265,9 @@ private[sql] class BooleanColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
   private def bool2int(b: Boolean): Int = if (b) 1 else 0
 
-  override protected val valueVector: NullableBitVector
+  override val valueVector: NullableBitVector
     = new NullableBitVector("BooleanValue", allocator)
-  override protected val valueMutator: NullableBitVector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableBitVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit
@@ -276,9 +276,9 @@ private[sql] class BooleanColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class ShortColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableSmallIntVector
+  override val valueVector: NullableSmallIntVector
     = new NullableSmallIntVector("ShortValue", allocator)
-  override protected val valueMutator: NullableSmallIntVector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableSmallIntVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit
@@ -287,9 +287,9 @@ private[sql] class ShortColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class IntegerColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableIntVector
+  override val valueVector: NullableIntVector
     = new NullableIntVector("IntValue", allocator)
-  override protected val valueMutator: NullableIntVector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableIntVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit
@@ -298,9 +298,9 @@ private[sql] class IntegerColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class LongColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableBigIntVector
+  override val valueVector: NullableBigIntVector
     = new NullableBigIntVector("LongValue", allocator)
-  override protected val valueMutator: NullableBigIntVector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableBigIntVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit
@@ -309,9 +309,9 @@ private[sql] class LongColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class FloatColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableFloat4Vector
+  override val valueVector: NullableFloat4Vector
     = new NullableFloat4Vector("FloatValue", allocator)
-  override protected val valueMutator: NullableFloat4Vector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableFloat4Vector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit
@@ -320,9 +320,9 @@ private[sql] class FloatColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class DoubleColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableFloat8Vector
+  override val valueVector: NullableFloat8Vector
     = new NullableFloat8Vector("DoubleValue", allocator)
-  override protected val valueMutator: NullableFloat8Vector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableFloat8Vector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit
@@ -331,9 +331,9 @@ private[sql] class DoubleColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class ByteColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableUInt1Vector
+  override val valueVector: NullableUInt1Vector
     = new NullableUInt1Vector("ByteValue", allocator)
-  override protected val valueMutator: NullableUInt1Vector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableUInt1Vector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit
@@ -342,9 +342,9 @@ private[sql] class ByteColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class UTF8StringColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableVarBinaryVector
+  override val valueVector: NullableVarBinaryVector
     = new NullableVarBinaryVector("UTF8StringValue", allocator)
-  override protected val valueMutator: NullableVarBinaryVector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableVarBinaryVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit = {
@@ -355,9 +355,9 @@ private[sql] class UTF8StringColumnWriter(ordinal: Int, allocator: BaseAllocator
 
 private[sql] class BinaryColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableVarBinaryVector
+  override val valueVector: NullableVarBinaryVector
     = new NullableVarBinaryVector("BinaryValue", allocator)
-  override protected val valueMutator: NullableVarBinaryVector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableVarBinaryVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow, ordinal: Int): Unit = {
@@ -368,12 +368,12 @@ private[sql] class BinaryColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class DateColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableDateVector
+  override val valueVector: NullableDateVector
     = new NullableDateVector("DateValue", allocator)
-  override protected val valueMutator: NullableDateVector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableDateVector#Mutator = valueVector.getMutator
 
-  override protected def setNull(): Unit = valueMutator.setNull(count)
-  override protected def setValue(row: InternalRow, ordinal: Int): Unit = {
+  override def setNull(): Unit = valueMutator.setNull(count)
+  override def setValue(row: InternalRow, ordinal: Int): Unit = {
     // TODO: comment on diff btw value representations of date/timestamp
     valueMutator.setSafe(count, row.getInt(ordinal).toLong * 24 * 3600 * 1000)
   }
@@ -381,13 +381,12 @@ private[sql] class DateColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] class TimeStampColumnWriter(ordinal: Int, allocator: BaseAllocator)
     extends PrimitiveColumnWriter(ordinal, allocator) {
-  override protected val valueVector: NullableTimeStampMicroVector
+  override val valueVector: NullableTimeStampMicroVector
     = new NullableTimeStampMicroVector("TimeStampValue", allocator)
-  override protected val valueMutator: NullableTimeStampMicroVector#Mutator = valueVector.getMutator
+  override val valueMutator: NullableTimeStampMicroVector#Mutator = valueVector.getMutator
 
-  override protected def setNull(): Unit = valueMutator.setNull(count)
-
-  override protected def setValue(row: InternalRow, ordinal: Int): Unit = {
+  override def setNull(): Unit = valueMutator.setNull(count)
+  override def setValue(row: InternalRow, ordinal: Int): Unit = {
     valueMutator.setSafe(count, row.getLong(ordinal) / 1000)
   }
 }
