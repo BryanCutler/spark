@@ -86,19 +86,21 @@ private[sql] class ByteArrayReadableSeekableByteChannel(var byteArray: Array[Byt
 private[sql] abstract class ArrowPayload extends Iterator[ArrowRecordBatch]
 
 /**
+ * Build a payload from existing ArrowRecordBatches
+ */
+private[sql] class ArrowStaticPayload(batches: ArrowRecordBatch*) extends ArrowPayload {
+  private val iter = batches.iterator
+  override def next(): ArrowRecordBatch = iter.next()
+  override def hasNext: Boolean = iter.hasNext
+}
+
+/**
  * Class that wraps an Arrow RootAllocator used in conversion
  */
 private[sql] class ArrowConverters {
   private val _allocator = new RootAllocator(Long.MaxValue)
 
   private[sql] def allocator: RootAllocator = _allocator
-
-  private class ArrowStaticPayload(batches: ArrowRecordBatch*) extends ArrowPayload {
-    private val iter = batches.iterator
-
-    override def next(): ArrowRecordBatch = iter.next()
-    override def hasNext: Boolean = iter.hasNext
-  }
 
   def interalRowIterToPayload(rowIter: Iterator[InternalRow], schema: StructType): ArrowPayload = {
     val batch = ArrowConverters.internalRowIterToArrowBatch(rowIter, schema, allocator)
