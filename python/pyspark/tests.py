@@ -2101,9 +2101,9 @@ class KeywordOnlyTests(unittest.TestCase):
         @keyword_only
         def set(self, x=None, y=None):
             if "x" in self._input_kwargs:
-                self._x = self._input_kwargs["x"]
+                self._input_kwargs["x"]
             if "y" in self._input_kwargs:
-                self._y = self._input_kwargs["y"]
+                self._input_kwargs["y"]
             return x, y
 
     def test_keywords(self):
@@ -2124,8 +2124,8 @@ class KeywordOnlyTests(unittest.TestCase):
             @keyword_only
             def set(self, x=None, other=None, other_x=None):
                 if "other" in self._input_kwargs:
-                    self._input_kwargs["other"].set(x=self._input_kwargs["other_x"])
-                self._x = self._input_kwargs["x"]
+                    self._input_kwargs["other_x"])
+                self._input_kwargs["x"]
 
         a = Setter()
         b = Setter()
