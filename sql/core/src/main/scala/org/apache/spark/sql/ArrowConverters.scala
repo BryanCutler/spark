@@ -81,19 +81,21 @@ private[sql] class ByteArrayReadableSeekableByteChannel(var byteArray: Array[Byt
   }
 }
 
+private[sql] class ArrowPayload(val batch: ArrowRecordBatch) {}
+
 /**
  * Intermediate data structure returned from Arrow conversions
  */
-private[sql] abstract class ArrowPayload extends Iterator[ArrowRecordBatch]
+//private[sql] abstract class ArrowPayload extends Iterator[ArrowRecordBatchInternal]
 
 /**
  * Build a payload from existing ArrowRecordBatches
  */
-private[sql] class ArrowStaticPayload(batches: ArrowRecordBatch*) extends ArrowPayload {
+/*private[sql] class ArrowStaticPayload(batches: ArrowRecordBatch*) extends ArrowPayload {
   private val iter = batches.iterator
   override def next(): ArrowRecordBatch = iter.next()
   override def hasNext: Boolean = iter.hasNext
-}
+}*/
 
 /**
  * Class that wraps an Arrow RootAllocator used in conversion
@@ -105,11 +107,11 @@ private[sql] class ArrowConverters {
 
   def interalRowIterToPayload(rowIter: Iterator[InternalRow], schema: StructType): ArrowPayload = {
     val batch = ArrowConverters.internalRowIterToArrowBatch(rowIter, schema, allocator)
-    new ArrowStaticPayload(batch)
+    new ArrowPayload(batch)
   }
 
-  def readPayloadByteArrays(payloadByteArrays: Array[Array[Byte]]): ArrowPayload = {
-    val batches = scala.collection.mutable.ArrayBuffer.empty[ArrowRecordBatch]
+  def readPayloadByteArrays(payloadByteArrays: Array[Array[Byte]]): Iterator[ArrowPayload] = {
+    val batches = scala.collection.mutable.ArrayBuffer.empty[ArrowPayload]
     var i = 0
     while (i < payloadByteArrays.length) {
       val payloadBytes = payloadByteArrays(i)
@@ -117,10 +119,10 @@ private[sql] class ArrowConverters {
       val reader = new ArrowReader(in, _allocator)
       val footer = reader.readFooter()
       val batchBlocks = footer.getRecordBatches.asScala.toArray
-      batchBlocks.foreach(block => batches += reader.readRecordBatch(block))
+      batchBlocks.foreach(block => batches += new ArrowPayload(reader.readRecordBatch(block)))
       i += 1
     }
-    new ArrowStaticPayload(batches: _*)
+    batches.toIterator
   }
 
   def close(): Unit = {
@@ -203,18 +205,12 @@ private[sql] object ArrowConverters {
     val writer = new ArrowWriter(Channels.newChannel(out), arrowSchema)
 
     // Iterate over payload batches to write each one, ensure all batches get closed
-    var batch: ArrowRecordBatch = null
-    Utils.tryWithSafeFinallyAndFailureCallbacks {
-      while (payload.hasNext) {
-        batch = payload.next()
-        writer.writeRecordBatch(batch)
-        batch.close()
-      }
-    }(catchBlock = {
-      Option(batch).foreach(_.close())
-      payload.foreach(_.close())
-    }, finallyBlock = writer.close())
-
+    Utils.tryWithSafeFinally {
+      writer.writeRecordBatch(payload.batch)
+    } {
+      payload.batch.close()
+      writer.close()
+    }
     out.toByteArray
   }
 }

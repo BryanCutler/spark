@@ -43,10 +43,10 @@ class ArrowConvertersSuite extends SharedSQLContext with BeforeAndAfterAll {
   private var tempDataPath: String = _
 
   private def collectAsArrow(df: DataFrame,
-                             converter: Option[ArrowConverters] = None): ArrowPayload = {
+                             converter: Option[ArrowConverters] = None): Array[ArrowPayload] = {
     val cnvtr = converter.getOrElse(new ArrowConverters)
     val payloadByteArrays = df.toArrowPayloadBytes().collect()
-    cnvtr.readPayloadByteArrays(payloadByteArrays)
+    cnvtr.readPayloadByteArrays(payloadByteArrays).toArray
   }
 
   override def beforeAll(): Unit = {
@@ -56,14 +56,13 @@ class ArrowConvertersSuite extends SharedSQLContext with BeforeAndAfterAll {
 
   test("collect to arrow record batch") {
     val indexData = (1 to 6).toDF("i")
-    val arrowPayload = collectAsArrow(indexData)
-    assert(arrowPayload.nonEmpty)
-    val arrowBatches = arrowPayload.toArray
-    assert(arrowBatches.length == indexData.rdd.getNumPartitions)
-    val rowCount = arrowBatches.map(batch => batch.getLength).sum
+    val arrowPayloads = collectAsArrow(indexData)
+    assert(arrowPayloads.nonEmpty)
+    assert(arrowPayloads.length == indexData.rdd.getNumPartitions)
+    val rowCount = arrowPayloads.map(payload => payload.batch.getLength).sum
     assert(rowCount === indexData.count())
-    arrowBatches.foreach(batch => assert(batch.getNodes.size() > 0))
-    arrowBatches.foreach(batch => batch.close())
+    arrowPayloads.foreach(payload => assert(payload.batch.getNodes.size() > 0))
+    arrowPayloads.foreach(payload => payload.batch.close())
   }
 
   test("numeric type conversion") {
@@ -112,12 +111,9 @@ class ArrowConvertersSuite extends SharedSQLContext with BeforeAndAfterAll {
   test("partitioned DataFrame") {
     val converter = new ArrowConverters
     val schema = testData2.schema
-    val arrowPayload = collectAsArrow(testData2, Some(converter))
-    val arrowBatches = arrowPayload.toArray
+    val arrowPayloads = collectAsArrow(testData2, Some(converter))
     // NOTE: testData2 should have 2 partitions -> 2 arrow batches in payload
-    assert(arrowBatches.length === 2)
-    val pl1 = new ArrowStaticPayload(arrowBatches(0))
-    val pl2 = new ArrowStaticPayload(arrowBatches(1))
+    assert(arrowPayloads.length === 2)
     // Generate JSON files
     val a = List[Int](1, 1, 2, 2, 3, 3)
     val b = List[Int](1, 2, 1, 2, 1, 2)
@@ -134,8 +130,8 @@ class ArrowConvertersSuite extends SharedSQLContext with BeforeAndAfterAll {
     val tempFile2 = new File(tempDataPath, "testData2-ints-part2.json")
     json1.write(tempFile1)
     json2.write(tempFile2)
-    validateConversion(schema, pl1, tempFile1, Some(converter))
-    validateConversion(schema, pl2, tempFile2, Some(converter))
+    validateConversion(schema, Array(arrowPayloads(0)), tempFile1, Some(converter))
+    validateConversion(schema, Array(arrowPayloads(1)), tempFile2, Some(converter))
   }
 
   test("empty frame collect") {
@@ -145,11 +141,10 @@ class ArrowConvertersSuite extends SharedSQLContext with BeforeAndAfterAll {
 
   test("empty partition collect") {
     val emptyPart = spark.sparkContext.parallelize(Seq(1), 2).toDF("i")
-    val arrowPayload = collectAsArrow(emptyPart)
-    val arrowBatches = arrowPayload.toArray
-    assert(arrowBatches.length === 2)
-    assert(arrowBatches.count(_.getLength == 0) === 1)
-    assert(arrowBatches.count(_.getLength == 1) === 1)
+    val arrowPayloads = collectAsArrow(emptyPart)
+    assert(arrowPayloads.length === 2)
+    assert(arrowPayloads.count(_.batch.getLength == 0) === 1)
+    assert(arrowPayloads.count(_.batch.getLength == 1) === 1)
   }
 
   test("unsupported types") {
@@ -193,7 +188,7 @@ class ArrowConvertersSuite extends SharedSQLContext with BeforeAndAfterAll {
   }
 
   private def validateConversion(sparkSchema: StructType,
-                                 arrowPayload: ArrowPayload,
+                                 arrowPayloads: Array[ArrowPayload],
                                  jsonFile: File,
                                  converterOpt: Option[ArrowConverters] = None): Unit = {
     val converter = converterOpt.getOrElse(new ArrowConverters)
@@ -205,7 +200,7 @@ class ArrowConvertersSuite extends SharedSQLContext with BeforeAndAfterAll {
 
     val arrowRoot = new VectorSchemaRoot(arrowSchema, converter.allocator)
     val vectorLoader = new VectorLoader(arrowRoot)
-    arrowPayload.foreach(vectorLoader.load)
+    arrowPayloads.foreach(payload => vectorLoader.load(payload.batch))
     val jsonRoot = jsonReader.read()
     Validator.compareVectorSchemaRoot(arrowRoot, jsonRoot)
   }

@@ -2756,6 +2756,13 @@ class Dataset[T] private[sql](
     withNewExecutionId {
       PythonRDD.serveIterator(payloadByteArrays.iterator, "serve-Arrow")
     }
+
+    /*
+    This is a little slower for some reason
+    val payloadRdd = toArrowPayloadBytes()
+    withNewExecutionId {
+      PythonRDD.serveIterator(payloadRdd.toLocalIterator, "serve-Arrow")
+    }*/
   }
 
   private[sql] def toPythonIterator(): Int = {
