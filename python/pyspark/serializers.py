@@ -199,6 +199,20 @@ class ArrowSerializer(FramedSerializer):
         return "ArrowSerializer"
 
 
+class ArrowStreamSerializer(Serializer):
+
+    def dump_stream(self, iterator, stream):
+        raise NotImplementedError("blah")
+
+    def load_stream(self, stream):
+        from pyarrow import StreamReader, BufferReader
+        reader = StreamReader(stream)
+        return reader.read_all()
+
+    def __repr__(self):
+        return "ArrowStreamSerializer"
+
+
 class BatchedSerializer(Serializer):
 
     """

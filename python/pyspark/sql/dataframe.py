@@ -28,7 +28,7 @@ else:
 from pyspark import copy_func, since
 from pyspark.rdd import RDD, _load_from_socket, ignore_unicode_prefix
 from pyspark.serializers import ArrowSerializer, BatchedSerializer, PickleSerializer, \
-    UTF8Deserializer
+    UTF8Deserializer, ArrowStreamSerializer
 from pyspark.storagelevel import StorageLevel
 from pyspark.traceback_utils import SCCallSiteSync
 from pyspark.sql.types import _parse_datatype_json_string
@@ -1621,8 +1621,7 @@ class DataFrame(object):
         """
         if useArrow:
             from pyarrow.table import concat_tables
-            tables = self._collectAsArrow()
-            table = concat_tables(tables)
+            table = self._collectAsArrow()
             return table.to_pandas()
         else:
             import pandas as pd
@@ -1637,7 +1636,8 @@ class DataFrame(object):
         """
         with SCCallSiteSync(self._sc) as css:
             port = self._jdf.collectAsArrowToPython()
-        return list(_load_from_socket(port, ArrowSerializer()))
+        table = _load_from_socket(port, ArrowStreamSerializer())
+        return table
 
     ##########################################################################################
     # Pandas compatibility

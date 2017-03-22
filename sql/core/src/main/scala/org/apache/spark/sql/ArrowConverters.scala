@@ -17,9 +17,12 @@
 
 package org.apache.spark.sql
 
-import java.io.ByteArrayOutputStream
+import java.io.{ObjectInputStream, ObjectOutputStream, OutputStream, ByteArrayOutputStream}
 import java.nio.ByteBuffer
 import java.nio.channels.{Channels, SeekableByteChannel}
+
+import com.google.flatbuffers.FlatBufferBuilder
+import org.apache.arrow.vector.stream.{ArrowStreamWriter, MessageSerializer}
 
 import scala.collection.JavaConverters._
 
@@ -27,7 +30,7 @@ import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.{BaseAllocator, RootAllocator}
 import org.apache.arrow.vector._
 import org.apache.arrow.vector.BaseValueVector.BaseMutator
-import org.apache.arrow.vector.file.{ArrowReader, ArrowWriter}
+import org.apache.arrow.vector.file._
 import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
 import org.apache.arrow.vector.types.{FloatingPointPrecision, TimeUnit}
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, Schema}
@@ -81,7 +84,24 @@ private[sql] class ByteArrayReadableSeekableByteChannel(var byteArray: Array[Byt
   }
 }
 
-private[sql] class ArrowPayload(val batch: ArrowRecordBatch) {}
+private[sql] class ArrowPayload(initialBatch: ArrowRecordBatch) extends Serializable {
+
+  def this() = this(null)
+
+  var _batch = initialBatch
+
+  def batch: ArrowRecordBatch = _batch
+
+  private def readObject(in: ObjectInputStream): Unit = Utils.tryOrIOException {
+    val rootAllocator = new RootAllocator(Long.MaxValue)
+    _batch = MessageSerializer.deserializeRecordBatch(new ReadChannel(Channels.newChannel(in)), rootAllocator)
+    //rootAllocator.close()
+  }
+
+  private def writeObject(out: ObjectOutputStream): Unit = Utils.tryOrIOException {
+    MessageSerializer.serialize(new WriteChannel(Channels.newChannel(out)), batch)
+  }
+}
 
 /**
  * Intermediate data structure returned from Arrow conversions
@@ -102,6 +122,7 @@ private[sql] class ArrowPayload(val batch: ArrowRecordBatch) {}
  */
 private[sql] class ArrowConverters {
   private val _allocator = new RootAllocator(Long.MaxValue)
+  private var _writer: ArrowStreamWriter = null
 
   private[sql] def allocator: RootAllocator = _allocator
 
@@ -111,6 +132,7 @@ private[sql] class ArrowConverters {
   }
 
   def readPayloadByteArrays(payloadByteArrays: Array[Array[Byte]]): Iterator[ArrowPayload] = {
+    // TODO: change to real iterator, to get one payload at a time
     val batches = scala.collection.mutable.ArrayBuffer.empty[ArrowPayload]
     var i = 0
     while (i < payloadByteArrays.length) {
@@ -125,8 +147,30 @@ private[sql] class ArrowConverters {
     batches.toIterator
   }
 
+  def writePayloads(payloadIter: Iterator[ArrowPayload],
+                                 schema: StructType,
+                                 out: OutputStream): Unit = {
+    if (_writer == null) {
+      val arrowSchema = ArrowConverters.schemaToArrowSchema(schema)
+      _writer = new ArrowStreamWriter(Channels.newChannel(out), arrowSchema)
+    }
+
+    var payload: ArrowPayload = null
+    while (payloadIter.hasNext) {
+      // TODO: catch exceptions
+      payload = payloadIter.next()
+      _writer.writeRecordBatch(payload.batch)
+      payload.batch.close()
+    }
+
+    //writer.close()
+  }
+
   def close(): Unit = {
-    _allocator.close()
+    //_allocator.close()
+    if (_writer != null) {
+      _writer.close()
+    }
   }
 }
 

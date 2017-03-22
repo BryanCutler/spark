@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql
 
-import java.io.CharArrayWriter
+import java.io.{FileOutputStream, BufferedOutputStream, CharArrayWriter}
 import java.sql.{Date, Timestamp}
 import java.util.TimeZone
 
@@ -2751,10 +2751,16 @@ class Dataset[T] private[sql](
    * Collect a Dataset as ArrowPayload byte arrays and serve to PySpark.
    */
   private[sql] def collectAsArrowToPython(): Int = {
-    val payloadRdd = toArrowPayloadBytes()
-    val payloadByteArrays = payloadRdd.collect()
+    val schema_captured = this.schema
     withNewExecutionId {
-      PythonRDD.serveIterator(payloadByteArrays.iterator, "serve-Arrow")
+      PythonRDD.serveToStream("serve-Arrow") { out =>
+        val cnvtr = new ArrowConverters
+        val toArrowStream = (index: Int, payloadIter: Iterator[ArrowPayload]) => {
+          cnvtr.writePayloads(payloadIter, schema_captured, out)
+        }
+        toArrowPayload().collectAndHandle(toArrowStream)
+        cnvtr.close()
+      }
     }
 
     /*
@@ -2856,6 +2862,16 @@ class Dataset[T] private[sql](
       val payloadBytes = ArrowConverters.payloadToByteArray(payload, schema_captured)
       converter.close()
       Iterator(payloadBytes)
+    }
+  }
+
+  private[sql] def toArrowPayload(): RDD[ArrowPayload] = {
+    val schema_captured = this.schema
+    queryExecution.toRdd.mapPartitionsInternal { iter =>
+      val converter = new ArrowConverters
+      val payload = converter.interalRowIterToPayload(iter, schema_captured)
+      converter.close()
+      Iterator(payload)
     }
   }
 }

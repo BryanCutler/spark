@@ -718,6 +718,34 @@ private[spark] object PythonRDD extends Logging {
     serverSocket.getLocalPort
   }
 
+  def serveToStream(threadName: String)(block: OutputStream => Unit): Int = {
+    val serverSocket = new ServerSocket(0, 1, InetAddress.getByName("localhost"))
+    // Close the socket if no connection in 3 seconds
+    serverSocket.setSoTimeout(3000)
+
+    new Thread(threadName) {
+      setDaemon(true)
+      override def run() {
+        try {
+          val sock = serverSocket.accept()
+          val out = new DataOutputStream(new BufferedOutputStream(sock.getOutputStream))
+          Utils.tryWithSafeFinally {
+            block(out)
+          } {
+            out.close()
+          }
+        } catch {
+          case NonFatal(e) =>
+            logError(s"Error while sending iterator", e)
+        } finally {
+          serverSocket.close()
+        }
+      }
+    }.start()
+
+    serverSocket.getLocalPort
+  }
+
   private def getMergedConf(confAsMap: java.util.HashMap[String, String],
       baseConf: Configuration): Configuration = {
     val conf = PythonHadoopUtil.mapToConf(confAsMap)

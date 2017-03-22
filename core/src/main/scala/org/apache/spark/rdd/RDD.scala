@@ -937,6 +937,13 @@ abstract class RDD[T: ClassTag](
     Array.concat(results: _*)
   }
 
+  def collectAndHandle(resultHandler: (Int, Iterator[T]) => Unit): Unit = withScope {
+    val collectPartition: Iterator[T] => Iterator[T] = iter => {
+      iter
+    }
+    sc.runJob(this, collectPartition, resultHandler)
+  }
+
   /**
    * Return an iterator that contains all of the elements in this RDD.
    *
