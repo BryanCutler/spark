@@ -30,7 +30,7 @@ from pyspark.broadcast import Broadcast, _broadcastRegistry
 from pyspark.taskcontext import TaskContext
 from pyspark.files import SparkFiles
 from pyspark.serializers import write_with_length, write_int, read_long, \
-    write_long, read_int, SpecialLengths, UTF8Deserializer, PickleSerializer, BatchedSerializer
+    write_long, read_int, SpecialLengths, UTF8Deserializer, PickleSerializer, BatchedSerializer, ArrowRowSerializer
 from pyspark import shuffle
 
 pickleSer = PickleSerializer()
@@ -105,7 +105,8 @@ def read_udfs(pickleSer, infile):
         mapper = eval(mapper_str, udfs)
 
     func = lambda _, it: map(mapper, it)
-    ser = BatchedSerializer(PickleSerializer(), 100)
+    #ser = BatchedSerializer(PickleSerializer(), 100)
+    ser = ArrowRowSerializer()
     # profiling is not supported for UDF
     return func, None, ser, ser
 
