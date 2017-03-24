@@ -27,8 +27,8 @@ else:
 
 from pyspark import copy_func, since
 from pyspark.rdd import RDD, _load_from_socket, ignore_unicode_prefix
-from pyspark.serializers import ArrowSerializer, BatchedSerializer, PickleSerializer, \
-    UTF8Deserializer, ArrowStreamSerializer
+from pyspark.serializers import ArrowStreamSerializer, BatchedSerializer, PickleSerializer, \
+    UTF8Deserializer
 from pyspark.storagelevel import StorageLevel
 from pyspark.traceback_utils import SCCallSiteSync
 from pyspark.sql.types import _parse_datatype_json_string
@@ -1620,7 +1620,6 @@ class DataFrame(object):
         1    5    Bob
         """
         if useArrow:
-            from pyarrow.table import concat_tables
             table = self._collectAsArrow()
             return table.to_pandas()
         else:
@@ -1636,7 +1635,7 @@ class DataFrame(object):
         """
         with SCCallSiteSync(self._sc) as css:
             port = self._jdf.collectAsArrowToPython()
-        table = _load_from_socket(port, ArrowStreamSerializer())
+        table = list(_load_from_socket(port, ArrowStreamSerializer(load_to_single_batch=True)))[0]
         return table
 
     ##########################################################################################

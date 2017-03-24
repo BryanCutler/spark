@@ -201,13 +201,29 @@ class ArrowSerializer(FramedSerializer):
 
 class ArrowStreamSerializer(Serializer):
 
+    def __init__(self, load_to_single_batch=True):
+        self._schema = None
+        self._load_to_single = load_to_single_batch
+
+    def set_schema(self, schema):
+        self._schema = schema
+
+    def dump_stream_with_schema(self, iterator, stream, schema):
+        from pyarrow import StreamWriter
+        writer = StreamWriter(stream, schema)
+        for batch in iterator:
+            writer.write_batch(batch)
+
     def dump_stream(self, iterator, stream):
-        raise NotImplementedError("blah")
+        self.dump_stream_with_schema(iterator, stream, self._schema)
 
     def load_stream(self, stream):
         from pyarrow import StreamReader, BufferReader
         reader = StreamReader(stream)
-        return reader.read_all()
+        if self._load_to_single:
+            return list(reader.read_all())
+        else:
+            return iter(reader)
 
     def __repr__(self):
         return "ArrowStreamSerializer"
