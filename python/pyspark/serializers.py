@@ -137,6 +137,7 @@ class FramedSerializer(Serializer):
     def dump_stream(self, iterator, stream):
         for obj in iterator:
             self._write_with_length(obj, stream)
+        #write_int(SpecialLengths.END_OF_DATA_SECTION, stream)
 
     def load_stream(self, stream):
         while True:
@@ -222,9 +223,10 @@ class ArrowStreamSerializer(Serializer):
 
     def load_stream(self, stream):
         from pyarrow import StreamReader, BufferReader
+        # TODO: BufferReader throws error
         reader = StreamReader(stream)
         if self._load_to_single:
-            return list(reader.read_all())
+            return [reader.read_all()]
         else:
             return iter(reader)
 

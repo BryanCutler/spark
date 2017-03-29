@@ -105,8 +105,8 @@ def read_udfs(pickleSer, infile):
         mapper = eval(mapper_str, udfs)
 
     func = lambda _, it: map(mapper, it)
-    #ser = BatchedSerializer(PickleSerializer(), 100)
-    ser = ArrowRowSerializer()
+    ser = BatchedSerializer(PickleSerializer(), 100)
+    #ser = ArrowRowSerializer()
     # profiling is not supported for UDF
     return func, None, ser, ser
 

@@ -17,11 +17,11 @@
 
 package org.apache.spark.sql.execution.python
 
-import java.io.File
+import java.io.{DataInputStream, DataOutputStream, File}
 
-import net.razorvine.pickle.{Pickler, Unpickler}
 import org.apache.spark.api.python.{ChainedPythonFunctions, PythonRunner}
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.ArrowConverters
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.SparkPlan
@@ -29,7 +29,6 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
 import org.apache.spark.{SparkEnv, TaskContext}
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 
@@ -94,38 +93,36 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
 
       // Input iterator to Python: input rows are grouped so we send them in batches to Python.
       // For each row, add it to the queue.
-      val projectedRows = iter.map { inputRow =>
+      val projectedRowIter = iter.map { inputRow =>
         queue.add(inputRow.asInstanceOf[UnsafeRow])
         projection(inputRow)
+      }
+
+      val cvtr = new ArrowConverters()
+      val payload = cvtr.interalRowIterToPayload(projectedRowIter, schema)
+      val dataWriteBlock = (out: DataOutputStream) => {
+        cvtr.writePayloads(Iterator(payload), schema, out)
+      }
+      val dataReadBlock = (in: DataInputStream) => {
+        cvtr.readPayloads(in)
       }
 
       val context = TaskContext.get()
 
       // Output iterator for results from Python.
-      val outputIterator = new PythonRunner(pyFuncs, bufferSize, reuseWorker, true, argOffsets)
-        .compute(inputIterator, context.partitionId(), context)
+      val payloadIterator = new PythonRunner(pyFuncs, bufferSize, reuseWorker, true, argOffsets)
+        .process(dataWriteBlock, dataReadBlock, context.partitionId(), context)
 
-      val unpickle = new Unpickler
-      val mutableRow = new GenericInternalRow(1)
+      // TODO: process multiple payloads
+      val payloadResult = payloadIterator.toArray.head
+
+      val outputIterator = cvtr.payloadToInternalRowIter(payloadResult)
+
       val joined = new JoinedRow
-      val resultType = if (udfs.length == 1) {
-        udfs.head.dataType
-      } else {
-        StructType(udfs.map(u => StructField("", u.dataType, u.nullable)))
-      }
       val resultProj = UnsafeProjection.create(output, output)
-      outputIterator.flatMap { pickedResult =>
-        val unpickledBatch = unpickle.loads(pickedResult)
-        unpickledBatch.asInstanceOf[java.util.ArrayList[Any]].asScala
-      }.map { result =>
-        val row = if (udfs.length == 1) {
-          // fast path for single UDF
-          mutableRow(0) = EvaluatePython.fromJava(result, resultType)
-          mutableRow
-        } else {
-          EvaluatePython.fromJava(result, resultType).asInstanceOf[InternalRow]
-        }
-        resultProj(joined(queue.remove(), row))
+
+      outputIterator.map { outputRow =>
+        resultProj(joined(queue.remove(), outputRow))
       }
     }
   }

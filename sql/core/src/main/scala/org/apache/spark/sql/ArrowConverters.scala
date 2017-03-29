@@ -17,12 +17,12 @@
 
 package org.apache.spark.sql
 
-import java.io.{ObjectInputStream, ObjectOutputStream, OutputStream, ByteArrayOutputStream}
+import java.io.{ByteArrayOutputStream, InputStream, ObjectInputStream, ObjectOutputStream, OutputStream}
 import java.nio.ByteBuffer
 import java.nio.channels.{Channels, SeekableByteChannel}
 
 import com.google.flatbuffers.FlatBufferBuilder
-import org.apache.arrow.vector.stream.{ArrowStreamWriter, MessageSerializer}
+import org.apache.arrow.vector.stream.{ArrowStreamReader, ArrowStreamWriter, MessageSerializer}
 
 import scala.collection.JavaConverters._
 
@@ -164,6 +164,32 @@ private[sql] class ArrowConverters {
     }
 
     //writer.close()
+  }
+
+  def readPayloads(in: InputStream): Iterator[ArrowPayload] = {
+    new Iterator[ArrowPayload] {
+      private val _reader = new ArrowStreamReader(Channels.newChannel(in), allocator)
+      private var _nextPayload = read()
+
+      override def hasNext: Boolean = _nextPayload != null
+
+      override def next(): ArrowPayload = {
+        val obj = _nextPayload
+        if (hasNext) {
+          _nextPayload = read()
+        }
+        obj
+      }
+
+      private def read(): ArrowPayload = {
+        Option(_reader.nextRecordBatch()).map(new ArrowPayload(_)).orNull
+      }
+    }
+  }
+
+  def payloadToInternalRowIter(payload: ArrowPayload): Iterator[InternalRow] = {
+    // TODO
+    Iterator.empty
   }
 
   def close(): Unit = {
