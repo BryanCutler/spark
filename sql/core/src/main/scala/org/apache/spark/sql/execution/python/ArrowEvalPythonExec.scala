@@ -86,7 +86,7 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
         }.toArray
       }.toArray
       val projection = newMutableProjection(allInputs, child.output)
-      val schema = StructType(dataTypes.map(dt => StructField("", dt)))
+      val schema = StructType(dataTypes.map(dt => StructField("data0", dt)))
       val needConversion = dataTypes.exists(EvaluatePython.needConversionInPython)
 
       // enable memo iff we serialize the row with schema (schema and class should be memorized)
@@ -100,11 +100,19 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
 
       val cvtr = new ArrowConverters()
       val payload = cvtr.interalRowIterToPayload(projectedRowIter, schema)
+      println(s"*** wrote payload $payload")
       val dataWriteBlock = (out: DataOutputStream) => {
+        println(s"*** begin dataWriteBlock $payload")
         cvtr.writePayloads(Iterator(payload), schema, out)
+        // no more batches
+        out.writeInt(0)
+        println("*** end dataWriteBlock")
       }
       val dataReadBlock = (in: DataInputStream) => {
-        cvtr.readPayloads(in)
+        println("*** begin dataReadBlock")
+        val ret  = cvtr.readPayloads(in)
+        println("*** end dataReadBlock")
+        ret
       }
 
       val context = TaskContext.get()
@@ -116,7 +124,7 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
       // TODO: process multiple payloads
       val payloadResult = payloadIterator.toArray.head
 
-      val outputIterator = cvtr.payloadToInternalRowIter(payloadResult)
+      val outputIterator = cvtr.payloadToInternalRowIter(payloadResult, schema)
 
       val joined = new JoinedRow
       val resultProj = UnsafeProjection.create(output, output)

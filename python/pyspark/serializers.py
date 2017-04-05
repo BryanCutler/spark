@@ -236,7 +236,11 @@ class ArrowStreamSerializer(Serializer):
 
 class ArrowRowSerializer(ArrowStreamSerializer):
 
+    def __init__(self):
+        super(ArrowRowSerializer, self).__init__(load_to_single_batch=True)
+
     def dump_stream_with_schema(self, iterator, stream, schema):
+        '''
         from pyarrow.array import from_pylist
         from pyarrow.table import RecordBatch
         names = [field.name for field in schema]
@@ -246,7 +250,11 @@ class ArrowRowSerializer(ArrowStreamSerializer):
                 cols[i].append(row[i])
         arrs = [from_pylist(c) for c in cols]
         batch = RecordBatch.from_arrays(arrs, names)
-        super(ArrowRowSerializer, self).dump_stream_with_schema([batch], stream, schema)
+        '''
+        from pyarrow import StreamWriter
+        writer = StreamWriter(stream, schema)
+        writer.write_batch(iterator)
+        #super(ArrowRowSerializer, self).dump_stream_with_schema([batch], stream, schema)
 
     def dump_stream(self, iterator, stream):
         if self._schema is None:
@@ -254,18 +262,22 @@ class ArrowRowSerializer(ArrowStreamSerializer):
         self.dump_stream_with_schema(iterator, stream, self._schema)
 
     def load_stream(self, stream):
-        it = super(ArrowRowSerializer, self).load_stream(stream)
-        while True:
-            batch = next(it)
-            # save schema in case serialize later
-            if self._schema is None:
-                self._schema = batch.schema
-            df = batch.to_pandas()
-            row_series_iter = df.T.iteritems()
-            row_series = next(row_series_iter)
-            while row_series is not None:
-                yield tuple(row_series)
-                row_series = next(row_series_iter, default=None)
+        from pyarrow import StreamReader
+        reader = StreamReader(stream)
+        batch = reader.get_next_batch()
+        #batch = super(ArrowRowSerializer, self).load_stream(stream)[0]
+        # save schema in case serialize later
+        if self._schema is None:
+            self._schema = batch.schema
+        return batch
+        '''
+        df = batch.to_pandas()
+        row_series_iter = df.T.iteritems()
+        row_series = next(row_series_iter)
+        while row_series is not None:
+            yield tuple(row_series)
+            row_series = next(row_series_iter, default=None)
+        '''
 
     def __repr__(self):
         return "ArrowRowSerializer"

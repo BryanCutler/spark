@@ -2859,7 +2859,7 @@ class Dataset[T] private[sql](
     queryExecution.toRdd.mapPartitionsInternal { iter =>
       val converter = new ArrowConverters
       val payload = converter.interalRowIterToPayload(iter, schema_captured)
-      val payloadBytes = ArrowConverters.payloadToByteArray(payload, schema_captured)
+      val payloadBytes = converter.payloadToByteArray(payload, schema_captured)
       converter.close()
       Iterator(payloadBytes)
     }

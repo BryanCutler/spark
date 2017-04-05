@@ -104,9 +104,10 @@ def read_udfs(pickleSer, infile):
         mapper_str = "lambda a: (%s)" % (", ".join(call_udf))
         mapper = eval(mapper_str, udfs)
 
-    func = lambda _, it: map(mapper, it)
-    ser = BatchedSerializer(PickleSerializer(), 100)
-    #ser = ArrowRowSerializer()
+    #func = lambda _, it: map(mapper, it)
+    func = lambda _, it: it
+    #ser = BatchedSerializer(PickleSerializer(), 100)
+    ser = ArrowRowSerializer()
     # profiling is not supported for UDF
     return func, None, ser, ser
 
@@ -165,6 +166,7 @@ def main(infile, outfile):
         _accumulatorRegistry.clear()
         is_sql_udf = read_int(infile)
         if is_sql_udf:
+            import asdb; asdb.set_trace()
             func, profiler, deserializer, serializer = read_udfs(pickleSer, infile)
         else:
             func, profiler, deserializer, serializer = read_command(pickleSer, infile)
@@ -173,6 +175,8 @@ def main(infile, outfile):
 
         def process():
             iterator = deserializer.load_stream(infile)
+            #raise ValueError("blah blah")
+            #serializer.dump_stream(iterator, outfile)
             serializer.dump_stream(func(split_index, iterator), outfile)
 
         if profiler:

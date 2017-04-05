@@ -198,7 +198,7 @@ class ArrowConvertersSuite extends SharedSQLContext with BeforeAndAfterAll {
     val jsonSchema = jsonReader.start()
     Validator.compareSchemas(arrowSchema, jsonSchema)
 
-    val arrowRoot = new VectorSchemaRoot(arrowSchema, converter.allocator)
+    val arrowRoot = VectorSchemaRoot.create(arrowSchema, converter.allocator)
     val vectorLoader = new VectorLoader(arrowRoot)
     arrowPayloads.foreach(payload => vectorLoader.load(payload.batch))
     val jsonRoot = jsonReader.read()
