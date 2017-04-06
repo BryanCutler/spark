@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql
 
-import java.io.{FileOutputStream, BufferedOutputStream, CharArrayWriter}
+import java.io.CharArrayWriter
 import java.sql.{Date, Timestamp}
 import java.util.TimeZone
 
@@ -2752,22 +2752,24 @@ class Dataset[T] private[sql](
    */
   private[sql] def collectAsArrowToPython(): Int = {
     val schema_captured = this.schema
+
+    val processPartition = (iter: Iterator[ArrowPayload]) => iter.toArray
     withNewExecutionId {
       PythonRDD.serveToStream("serve-Arrow") { out =>
-        val cnvtr = new ArrowConverters
-        val toArrowStream = (index: Int, payloadIter: Iterator[ArrowPayload]) => {
-          cnvtr.writePayloads(payloadIter, schema_captured, out)
+        val handler = (resultHandler:  (Int, Array[ArrowPayload]) => Unit) => {
+          toArrowPayload.collectAndHandle(processPartition, resultHandler)
         }
-        toArrowPayload().collectAndHandle(toArrowStream)
-        cnvtr.close()
+        ArrowConverters.writePayloadsToFunc(handler, schema_captured, out)
       }
     }
 
-    /*
-    This is a little slower for some reason
-    val payloadRdd = toArrowPayloadBytes()
+    /* USING toLocalIterator instead, partitions are converted in serial
+    val payloadRdd = toArrowPayload.cache()
+    val payloadIter = payloadRdd.toLocalIterator
     withNewExecutionId {
-      PythonRDD.serveIterator(payloadRdd.toLocalIterator, "serve-Arrow")
+      PythonRDD.serveToStream("serve-Arrow") { out =>
+        ArrowConverters.writePayloads(payloadIter, schema_captured, out)
+      }
     }*/
   }
 
@@ -2854,24 +2856,10 @@ class Dataset[T] private[sql](
   }
 
   /** Convert to an RDD of ArrowPayload byte arrays */
-  private[sql] def toArrowPayloadBytes(): RDD[Array[Byte]] = {
+  private[sql] def toArrowPayload: RDD[ArrowPayload] = {
     val schema_captured = this.schema
     queryExecution.toRdd.mapPartitionsInternal { iter =>
-      val converter = new ArrowConverters
-      val payload = converter.interalRowIterToPayload(iter, schema_captured)
-      val payloadBytes = converter.payloadToByteArray(payload, schema_captured)
-      converter.close()
-      Iterator(payloadBytes)
-    }
-  }
-
-  private[sql] def toArrowPayload(): RDD[ArrowPayload] = {
-    val schema_captured = this.schema
-    queryExecution.toRdd.mapPartitionsInternal { iter =>
-      val converter = new ArrowConverters
-      val payload = converter.interalRowIterToPayload(iter, schema_captured)
-      converter.close()
-      Iterator(payload)
+      ArrowConverters.toPayloadIterator(iter, schema_captured)
     }
   }
 }

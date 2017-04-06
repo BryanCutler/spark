@@ -197,7 +197,7 @@ class ArrowSerializer(FramedSerializer):
         return reader.read_all()
 
     def __repr__(self):
-        return "ArrowSerializer"
+        return "ArrowFramedSerializer"
 
 
 class ArrowStreamSerializer(Serializer):
@@ -224,6 +224,7 @@ class ArrowStreamSerializer(Serializer):
     def load_stream(self, stream):
         from pyarrow import StreamReader, BufferReader
         # TODO: BufferReader throws error
+        #import asdb; asdb.set_trace()
         reader = StreamReader(stream)
         if self._load_to_single:
             return [reader.read_all()]

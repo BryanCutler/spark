@@ -937,11 +937,13 @@ abstract class RDD[T: ClassTag](
     Array.concat(results: _*)
   }
 
-  def collectAndHandle(resultHandler: (Int, Iterator[T]) => Unit): Unit = withScope {
-    val collectPartition: Iterator[T] => Iterator[T] = iter => {
+  def collectAndHandle(processPartition: (Iterator[T]) => Array[T], resultHandler: (Int, Array[T]) => Unit): Unit = withScope {
+    /*val collectPartition: Iterator[T] => Iterator[T] = iter => {
       iter
-    }
-    sc.runJob(this, collectPartition, resultHandler)
+    }*/
+    sc.runJob(this, processPartition, resultHandler)
+    //sc.runJob(this, collectPartition, resultHandler)
+    //sc.runJob(this, (iter: Iterator[T]) => iter.toArray, resultHandler)
   }
 
   /**

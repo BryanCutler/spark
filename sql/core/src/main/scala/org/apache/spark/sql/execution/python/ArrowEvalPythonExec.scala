@@ -86,8 +86,8 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
         }.toArray
       }.toArray
       val projection = newMutableProjection(allInputs, child.output)
+      // TODO: need correct name
       val schema = StructType(dataTypes.map(dt => StructField("data0", dt)))
-      val needConversion = dataTypes.exists(EvaluatePython.needConversionInPython)
 
       // enable memo iff we serialize the row with schema (schema and class should be memorized)
 
@@ -98,33 +98,23 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
         projection(inputRow)
       }
 
-      val cvtr = new ArrowConverters()
-      val payload = cvtr.interalRowIterToPayload(projectedRowIter, schema)
-      println(s"*** wrote payload $payload")
       val dataWriteBlock = (out: DataOutputStream) => {
-        println(s"*** begin dataWriteBlock $payload")
-        cvtr.writePayloads(Iterator(payload), schema, out)
-        // no more batches
-        out.writeInt(0)
+        println(s"*** begin dataWriteBlock")
+        ArrowConverters.writeRowsAsPayloads(iter, schema, out)
         println("*** end dataWriteBlock")
       }
       val dataReadBlock = (in: DataInputStream) => {
         println("*** begin dataReadBlock")
-        val ret  = cvtr.readPayloads(in)
+        val iter = ArrowConverters.readPayloadsAsRows(in)
         println("*** end dataReadBlock")
-        ret
+        iter
       }
 
       val context = TaskContext.get()
 
       // Output iterator for results from Python.
-      val payloadIterator = new PythonRunner(pyFuncs, bufferSize, reuseWorker, true, argOffsets)
+      val outputIterator = new PythonRunner(pyFuncs, bufferSize, reuseWorker, true, argOffsets)
         .process(dataWriteBlock, dataReadBlock, context.partitionId(), context)
-
-      // TODO: process multiple payloads
-      val payloadResult = payloadIterator.toArray.head
-
-      val outputIterator = cvtr.payloadToInternalRowIter(payloadResult, schema)
 
       val joined = new JoinedRow
       val resultProj = UnsafeProjection.create(output, output)
