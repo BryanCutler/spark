@@ -100,7 +100,7 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
 
       val dataWriteBlock = (out: DataOutputStream) => {
         println(s"*** begin dataWriteBlock")
-        ArrowConverters.writeRowsAsPayloads(iter, schema, out)
+        ArrowConverters.writeRowsAsPayloads(projectedRowIter, schema, out)
         println("*** end dataWriteBlock")
       }
       val dataReadBlock = (in: DataInputStream) => {
