@@ -211,10 +211,17 @@ class ArrowStreamSerializer(Serializer):
         self._schema = schema
 
     def dump_stream_with_schema(self, iterator, stream, schema):
-        from pyarrow import StreamWriter
-        writer = StreamWriter(stream, schema)
+        import pyarrow as pa
+        import io
+        #sink = io.open(stream, mode='w', closefd=False)
+        sink = io.BytesIO()  # TODO: try something else to wrap stream
+        writer = pa.StreamWriter(sink, schema)
         for batch in iterator:
             writer.write_batch(batch)
+        writer.close()
+        #write_int(1, stream)  # signal start of stream
+        stream.write(sink.getvalue())
+        write_int(0, stream)  # signal end of stream
 
     def dump_stream(self, iterator, stream):
         if self._schema is None:
@@ -222,10 +229,10 @@ class ArrowStreamSerializer(Serializer):
         self.dump_stream_with_schema(iterator, stream, self._schema)
 
     def load_stream(self, stream):
-        from pyarrow import StreamReader, BufferReader
+        import pyarrow as pa
         # TODO: BufferReader throws error
         #import asdb; asdb.set_trace()
-        reader = StreamReader(stream)
+        reader = pa.StreamReader(stream)
         if self._load_to_single:
             return [reader.read_all()]
         else:
@@ -240,44 +247,44 @@ class ArrowRowSerializer(ArrowStreamSerializer):
     def __init__(self):
         super(ArrowRowSerializer, self).__init__(load_to_single_batch=True)
 
-    def dump_stream_with_schema(self, iterator, stream, schema):
-        '''
-        from pyarrow.array import from_pylist
-        from pyarrow.table import RecordBatch
-        names = [field.name for field in schema]
-        cols = [[] for _ in range(len(names))]
-        for row in iterator:
-            for i in range(len(row)):
-                cols[i].append(row[i])
-        arrs = [from_pylist(c) for c in cols]
-        batch = RecordBatch.from_arrays(arrs, names)
-        '''
-        from pyarrow import StreamWriter
-        writer = StreamWriter(stream, schema)
-        writer.write_batch(iterator)
-        #super(ArrowRowSerializer, self).dump_stream_with_schema([batch], stream, schema)
-
     def dump_stream(self, iterator, stream):
-        if self._schema is None:
-            raise RuntimeError("Arrow schema must be set first")
-        self.dump_stream_with_schema(iterator, stream, self._schema)
+        import pyarrow as pa
+        #import asdb; asdb.set_trace()
+        it = iter(iterator)
+        head = next(it)
+
+        if isinstance(head, (list, tuple)):
+            cols = [[] for _ in range(len(head))]
+        else:
+            cols = [[]]
+        names = ['_' + str(i) for i in range(len(cols))]
+
+        # fast assignment for single column
+        if len(cols) == 1:
+            cols[0].append(head)
+            cols[0].extend(it)
+        else:
+            for i in range(len(head)):
+                cols[i].append(head[i])
+            for row in iterator:
+                for i in range(len(row)):
+                    cols[i].append(row[i])
+
+        arrs = [pa.from_pylist(cols[c]) for c in range(len(cols))]
+        batch = pa.RecordBatch.from_arrays(arrs, names)
+        super(ArrowRowSerializer, self).dump_stream_with_schema([batch], stream, batch.schema)
 
     def load_stream(self, stream):
-        from pyarrow import StreamReader
-        reader = StreamReader(stream)
-        batch = reader.get_next_batch()
-        #batch = super(ArrowRowSerializer, self).load_stream(stream)[0]
-        # save schema in case serialize later
-        if self._schema is None:
-            self._schema = batch.schema
-        return batch
-        '''
+        batch = super(ArrowRowSerializer, self).load_stream(stream)[0]
         df = batch.to_pandas()
         row_series_iter = df.T.iteritems()
-        row_series = next(row_series_iter)
+        while True:
+            row_series = next(row_series_iter)
+            yield row_series[1].tolist()
+        '''
         while row_series is not None:
-            yield tuple(row_series)
-            row_series = next(row_series_iter, default=None)
+            yield tuple(row_series[1])
+            row_series = next(row_series_iter, None)
         '''
 
     def __repr__(self):

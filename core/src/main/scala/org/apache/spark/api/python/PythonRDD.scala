@@ -116,9 +116,9 @@ private[spark] class PythonRunner(
 
   def process[U](
       dataWriteBlock: DataOutputStream => Unit,
-      dataReadBlock: DataInputStream => U,
+      dataReadBlock: DataInputStream => Iterator[U],
       partitionIndex: Int,
-      context: TaskContext): U = {
+      context: TaskContext): Iterator[U] = {
     val startTime = System.currentTimeMillis
     val env = SparkEnv.get
     val localdir = env.blockManager.diskBlockManager.localDirs.map(f => f.getPath()).mkString(",")
@@ -151,76 +151,98 @@ private[spark] class PythonRunner(
     // Create stream to read data from process's stdout
     val dataIn = new DataInputStream(new BufferedInputStream(worker.getInputStream, bufferSize))
 
-    def checkForErrors(block: => Int): Int = {
-      if (writerThread.exception.isDefined) {
-        throw writerThread.exception.get
-      }
-      val length = block
-      if (length == SpecialLengths.PYTHON_EXCEPTION_THROWN) {
-        // Signals that an exception has been thrown in python
-        val exLength = dataIn.readInt()
-        val obj = new Array[Byte](exLength)
-        dataIn.readFully(obj)
-        throw new PythonException(new String(obj, StandardCharsets.UTF_8), writerThread.exception.orNull)
-      }
-      length
-    }
+    val stdoutIterator = new Iterator[U] {
+      val _dataIterator = dataReadBlock(dataIn)
 
-    try {
-      val data = dataReadBlock(dataIn)
+      override def next(): U = {
+        try {
+          //checkForErrors(dataIn.readInt())
+          checkForErrors(0)
+          val nextObj = _dataIterator.next()
 
-      // We've finished the data section of the output, but we can still
-      // read some accumulator updates:
-      val numAccumulatorUpdates = checkForErrors(dataIn.readInt())
-      (1 to numAccumulatorUpdates).foreach { _ =>
-        val updateLen = dataIn.readInt()
-        val update = new Array[Byte](updateLen)
-        dataIn.readFully(update)
-        accumulator.add(update)
-      }
+          // No more data, read footer
+          if (!_dataIterator.hasNext) {
 
-      // Timing data from worker
-      checkForErrors(dataIn.readInt())
-      val bootTime = dataIn.readLong()
-      val initTime = dataIn.readLong()
-      val finishTime = dataIn.readLong()
-      val boot = bootTime - startTime
-      val init = initTime - bootTime
-      val finish = finishTime - initTime
-      val total = finishTime - startTime
-      logInfo("Times: total = %s, boot = %s, init = %s, finish = %s".format(total, boot,
-        init, finish))
-      val memoryBytesSpilled = dataIn.readLong()
-      val diskBytesSpilled = dataIn.readLong()
-      context.taskMetrics.incMemoryBytesSpilled(memoryBytesSpilled)
-      context.taskMetrics.incDiskBytesSpilled(diskBytesSpilled)
+            // We've finished the data section of the output, but we can still
+            // read some accumulator updates:
+            val numAccumulatorUpdates = checkForErrors(dataIn.readInt())
+            (1 to numAccumulatorUpdates).foreach { _ =>
+              val updateLen = dataIn.readInt()
+              val update = new Array[Byte](updateLen)
+              dataIn.readFully(update)
+              accumulator.add(update)
+            }
 
-      // Check whether the worker is ready to be re-used.
-      if (checkForErrors(dataIn.readInt()) == SpecialLengths.END_OF_STREAM) {
-        if (reuse_worker) {
-          env.releasePythonWorker(pythonExec, envVars.asScala.toMap, worker)
-          released = true
+            // Timing data from worker
+            checkForErrors(dataIn.readInt())
+            val bootTime = dataIn.readLong()
+            val initTime = dataIn.readLong()
+            val finishTime = dataIn.readLong()
+            val boot = bootTime - startTime
+            val init = initTime - bootTime
+            val finish = finishTime - initTime
+            val total = finishTime - startTime
+            logInfo("Times: total = %s, boot = %s, init = %s, finish = %s".format(total, boot,
+              init, finish))
+            val memoryBytesSpilled = dataIn.readLong()
+            val diskBytesSpilled = dataIn.readLong()
+            context.taskMetrics.incMemoryBytesSpilled(memoryBytesSpilled)
+            context.taskMetrics.incDiskBytesSpilled(diskBytesSpilled)
+
+            // Check whether the worker is ready to be re-used.
+            if (checkForErrors(dataIn.readInt()) == SpecialLengths.END_OF_STREAM) {
+              if (reuse_worker) {
+                env.releasePythonWorker(pythonExec, envVars.asScala.toMap, worker)
+                released = true
+              }
+            }
+            // else == SpecialLengths.END_OF_DATA_SECTION to not reuse worker
+          }
+
+          nextObj
+
+        } catch {
+          case e: Exception if context.isInterrupted =>
+            logDebug("Exception thrown after task interruption", e)
+            throw new TaskKilledException
+
+          case e: Exception if env.isStopped =>
+            logDebug("Exception thrown after context is stopped", e)
+            throw new RuntimeException("TODO: exit silently")//data // exit silently
+
+          case e: Exception if writerThread.exception.isDefined =>
+            logError("Python worker exited unexpectedly (crashed)", e)
+            logError("This may have been caused by a prior exception:", writerThread.exception.get)
+            throw writerThread.exception.get
+
+          case eof: EOFException =>
+            throw new SparkException("Python worker exited unexpectedly (crashed)", eof)
+
+          /*case e: java.lang.IllegalArgumentException =>
+            checkForErrors(SpecialLengths.PYTHON_EXCEPTION_THROWN)
+            throw new SparkException("blah blah", e)*/
         }
       }
-      // else == SpecialLengths.END_OF_DATA_SECTION to not reuse worker
-      data
-    } catch {
-      case e: Exception if context.isInterrupted =>
-        logDebug("Exception thrown after task interruption", e)
-        throw new TaskKilledException
 
-      case e: Exception if env.isStopped =>
-        logDebug("Exception thrown after context is stopped", e)
-        throw new RuntimeException("TODO: exit silently")//data // exit silently
+      override def hasNext: Boolean = _dataIterator.hasNext
 
-      case e: Exception if writerThread.exception.isDefined =>
-        logError("Python worker exited unexpectedly (crashed)", e)
-        logError("This may have been caused by a prior exception:", writerThread.exception.get)
-        throw writerThread.exception.get
-
-      case eof: EOFException =>
-        throw new SparkException("Python worker exited unexpectedly (crashed)", eof)
+      private def checkForErrors(block: => Int): Int = {
+        if (writerThread.exception.isDefined) {
+          throw writerThread.exception.get
+        }
+        val length = block
+        if (length == SpecialLengths.PYTHON_EXCEPTION_THROWN) {
+          // Signals that an exception has been thrown in python
+          val exLength = dataIn.readInt()
+          val obj = new Array[Byte](exLength)
+          dataIn.readFully(obj)
+          throw new PythonException(new String(obj, StandardCharsets.UTF_8), writerThread.exception.orNull)
+        }
+        length
+      }
     }
+
+    new InterruptibleIterator(context, stdoutIterator)
   }
 
   def compute(

@@ -86,8 +86,7 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
         }.toArray
       }.toArray
       val projection = newMutableProjection(allInputs, child.output)
-      // TODO: need correct name
-      val schema = StructType(dataTypes.map(dt => StructField("data0", dt)))
+      val schema = StructType(dataTypes.map(dt => StructField("", dt)))
 
       // enable memo iff we serialize the row with schema (schema and class should be memorized)
 
@@ -99,15 +98,10 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
       }
 
       val dataWriteBlock = (out: DataOutputStream) => {
-        println(s"*** begin dataWriteBlock")
         ArrowConverters.writeRowsAsPayloads(projectedRowIter, schema, out)
-        println("*** end dataWriteBlock")
       }
       val dataReadBlock = (in: DataInputStream) => {
-        println("*** begin dataReadBlock")
-        val iter = ArrowConverters.readPayloadsAsRows(in)
-        println("*** end dataReadBlock")
-        iter
+        ArrowConverters.readPayloadsAsRows(in)
       }
 
       val context = TaskContext.get()
