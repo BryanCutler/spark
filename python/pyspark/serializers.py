@@ -210,20 +210,24 @@ class ArrowStreamSerializer(Serializer):
         # arrow schema
         self._schema = schema
 
-    def dump_stream_with_schema(self, iterator, stream, schema):
+    def dump_stream(self, iterator, stream):
         import pyarrow as pa
         import io
+        #import asdb; asdb.set_trace()
         #sink = io.open(stream, mode='w', closefd=False)
         sink = io.BytesIO()  # TODO: try something else to wrap stream
-        writer = pa.StreamWriter(sink, schema)
+        writer = None
         for batch in iterator:
+            if writer is None:
+                writer = pa.StreamWriter(sink, batch.schema)
             writer.write_batch(batch)
-        writer.close()
-        #write_int(1, stream)  # signal start of stream
-        stream.write(sink.getvalue())
-        write_int(0, stream)  # signal end of stream
+        if writer is not None:
+            writer.close()
+            #write_int(1, stream)  # signal start of stream
+            stream.write(sink.getvalue())
+            write_int(0, stream)  # signal end of stream
 
-    def dump_stream(self, iterator, stream):
+    def dump_stream_no_schema(self, iterator, stream):
         if self._schema is None:
             raise RuntimeError("Arrow schema must be set first")
         self.dump_stream_with_schema(iterator, stream, self._schema)
@@ -248,6 +252,8 @@ class ArrowRowSerializer(ArrowStreamSerializer):
         super(ArrowRowSerializer, self).__init__(load_to_single_batch=True)
 
     def dump_stream(self, iterator, stream):
+        super(ArrowRowSerializer, self).dump_stream(iterator, stream)
+        '''
         import pyarrow as pa
         #import asdb; asdb.set_trace()
         it = iter(iterator)
@@ -273,14 +279,19 @@ class ArrowRowSerializer(ArrowStreamSerializer):
         arrs = [pa.from_pylist(cols[c]) for c in range(len(cols))]
         batch = pa.RecordBatch.from_arrays(arrs, names)
         super(ArrowRowSerializer, self).dump_stream_with_schema([batch], stream, batch.schema)
+        '''
 
     def load_stream(self, stream):
-        batch = super(ArrowRowSerializer, self).load_stream(stream)[0]
+        self._load_to_single = False
+        iterator = super(ArrowRowSerializer, self).load_stream(stream)
+        return iterator
+        '''
         df = batch.to_pandas()
         row_series_iter = df.T.iteritems()
         while True:
             row_series = next(row_series_iter)
             yield row_series[1].tolist()
+        '''
         '''
         while row_series is not None:
             yield tuple(row_series[1])

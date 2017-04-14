@@ -248,6 +248,7 @@ private[sql] object ArrowConverters {
       private val _reader = new ArrowStreamReader(Channels.newChannel(in), _allocator)
       private val _root = _reader.getVectorSchemaRoot
       private var _index = 0
+      val mutableRow = new GenericInternalRow(1)
 
       _reader.loadNextBatch()
 
@@ -256,10 +257,11 @@ private[sql] object ArrowConverters {
       override def next(): InternalRow = {
         val fields = _root.getFieldVectors.asScala
 
+        /*
         val genericRowData = fields.map { field =>
           val obj: Any = field.getAccessor.getObject(_index)
           obj
-        }.toArray
+        }.toArray*/
 
         _index += 1
 
@@ -268,7 +270,9 @@ private[sql] object ArrowConverters {
           _reader.loadNextBatch()
         }
 
-        new GenericInternalRow(genericRowData)
+        mutableRow(0) = fields.head.getAccessor.getObject(_index)
+        mutableRow
+        //new GenericInternalRow(genericRowData)
       }
 
       /*

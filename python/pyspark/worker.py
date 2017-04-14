@@ -104,8 +104,8 @@ def read_udfs(pickleSer, infile):
         mapper_str = "lambda a: (%s)" % (", ".join(call_udf))
         mapper = eval(mapper_str, udfs)
 
-    func = lambda _, it: map(mapper, it)
-    #func = lambda _, it: it
+    #func = lambda _, it: map(mapper, it)
+    func = lambda _, it: it
     #ser = BatchedSerializer(PickleSerializer(), 100)
     ser = ArrowRowSerializer()
     # profiling is not supported for UDF
@@ -175,7 +175,7 @@ def main(infile, outfile):
         def process():
             iterator = deserializer.load_stream(infile)
             if isinstance(deserializer, ArrowRowSerializer):
-                pass #import asdb; asdb.set_trace()
+                pass#import asdb; asdb.set_trace()
             serializer.dump_stream(func(split_index, iterator), outfile)
 
         if profiler:
