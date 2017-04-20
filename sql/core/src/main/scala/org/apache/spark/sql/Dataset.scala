@@ -2751,8 +2751,13 @@ class Dataset[T] private[sql](
    * Collect a Dataset as ArrowPayload byte arrays and serve to PySpark.
    */
   private[sql] def collectAsArrowToPython(): Int = {
-    val schema_captured = this.schema
+    withNewExecutionId {
+      val iter = toArrowPayload.collect().iterator.map(_.batchBytes)
+      PythonRDD.serveIterator(iter, "serve-Arrow")
+    }
 
+    /*
+    val schema_captured = this.schema
     val processPartition = (iter: Iterator[ArrowPayload]) => iter.toArray
     withNewExecutionId {
       PythonRDD.serveToStream("serve-Arrow") { out =>
@@ -2762,6 +2767,7 @@ class Dataset[T] private[sql](
         ArrowConverters.writePayloadsToFunc(handler, schema_captured, out)
       }
     }
+    */
 
     /* USING toLocalIterator instead, partitions are converted in serial
     val payloadRdd = toArrowPayload.cache()

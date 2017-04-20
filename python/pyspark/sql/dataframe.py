@@ -27,7 +27,7 @@ else:
 
 from pyspark import copy_func, since
 from pyspark.rdd import RDD, _load_from_socket, ignore_unicode_prefix
-from pyspark.serializers import ArrowStreamSerializer, BatchedSerializer, PickleSerializer, \
+from pyspark.serializers import ArrowSerializer, ArrowStreamSerializer, BatchedSerializer, PickleSerializer, \
     UTF8Deserializer
 from pyspark.storagelevel import StorageLevel
 from pyspark.traceback_utils import SCCallSiteSync
@@ -1635,12 +1635,12 @@ class DataFrame(object):
         """
         with SCCallSiteSync(self._sc) as css:
             port = self._jdf.collectAsArrowToPython()
-        table = list(_load_from_socket(port, ArrowStreamSerializer(load_to_single_batch=True)))[0]
-        '''
-        from pyarrow.table import concat_tables
+        #table = list(_load_from_socket(port, ArrowStreamSerializer(load_to_single_batch=True)))[0]
+
+        import pyarrow as pa
         tables = list(_load_from_socket(port, ArrowSerializer()))
-        table = concat_tables(tables)
-        '''
+        table = pa.concat_tables(tables)
+
         return table
 
     ##########################################################################################

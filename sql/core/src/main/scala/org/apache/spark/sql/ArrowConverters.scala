@@ -182,7 +182,10 @@ private[sql] object ArrowConverters {
   }
   */
 
-  private[sql] def writePayloads(payloadIter: Iterator[ArrowPayload], schema: StructType, out: DataOutputStream): Unit = {
+  private[sql] def writePayloads(
+      payloadIter: Iterator[ArrowPayload],
+      schema: StructType,
+      out: DataOutputStream): Unit = {
     val allocator = new RootAllocator(Long.MaxValue)
     val arrowSchema = ArrowConverters.schemaToArrowSchema(schema)
     val root = VectorSchemaRoot.create(arrowSchema, allocator)
@@ -200,7 +203,10 @@ private[sql] object ArrowConverters {
     allocator.close()
   }
 
-  private[sql] def writePayloadsToFunc(func: ((Int, Array[ArrowPayload]) => Unit) => Unit, schema: StructType, out: DataOutputStream): Unit = {
+  private[sql] def writePayloadsToFunc(
+      func: ((Int, Array[ArrowPayload]) => Unit) => Unit,
+      schema: StructType,
+      out: DataOutputStream): Unit = {
     val allocator = new RootAllocator(Long.MaxValue)
     val arrowSchema = ArrowConverters.schemaToArrowSchema(schema)
     val root = VectorSchemaRoot.create(arrowSchema, allocator)
@@ -223,7 +229,10 @@ private[sql] object ArrowConverters {
     allocator.close()
   }
 
-  private[sql] def writeRowsAsArrow(rowIter: Iterator[InternalRow], schema: StructType, out: DataOutputStream): Unit = {
+  private[sql] def writeRowsAsArrow(
+      rowIter: Iterator[InternalRow],
+      schema: StructType,
+      out: DataOutputStream): Unit = {
     val allocator = new RootAllocator(Long.MaxValue)
     val arrowSchema = ArrowConverters.schemaToArrowSchema(schema)
     val root = VectorSchemaRoot.create(arrowSchema, allocator)
@@ -293,11 +302,12 @@ private[sql] object ArrowConverters {
   /**
    * Maps Iterator from InternalRow to ArrowPayload
    */
-  private[sql] def toPayloadIterator(rowIter: Iterator[InternalRow],
-                                     schema: StructType): Iterator[ArrowPayload] = {
+  private[sql] def toPayloadIterator(
+      rowIter: Iterator[InternalRow],
+      schema: StructType): Iterator[ArrowPayload] = {
     new Iterator[ArrowPayload] {
       private val _allocator = new RootAllocator(Long.MaxValue)
-      private var _nextPayload = convert()
+      private var _nextPayload = if (rowIter.nonEmpty) convert() else null
 
       override def hasNext: Boolean = _nextPayload != null
 
@@ -330,8 +340,7 @@ private[sql] object ArrowConverters {
       allocator: RootAllocator): ArrowRecordBatch = {
 
     val columnWriters = schema.fields.zipWithIndex.map { case (field, ordinal) =>
-      ColumnWriter(ordinal, allocator, field.dataType)
-        .init()
+      ColumnWriter(ordinal, allocator, field.dataType).init()
     }
 
     val writerLength = columnWriters.length
@@ -358,7 +367,10 @@ private[sql] object ArrowConverters {
   /**
    * Convert an ArrowRecordBatch to a byte array and close batch
    */
-  private[sql] def batchToByteArray(batch: ArrowRecordBatch, schema: StructType, allocator: BufferAllocator): Array[Byte] = {
+  private[sql] def batchToByteArray(
+      batch: ArrowRecordBatch,
+      schema: StructType,
+      allocator: BufferAllocator): Array[Byte] = {
     val arrowSchema = ArrowConverters.schemaToArrowSchema(schema)
     val root = VectorSchemaRoot.create(arrowSchema, allocator)
     val out = new ByteArrayOutputStream()
@@ -371,6 +383,7 @@ private[sql] object ArrowConverters {
       writer.writeBatch()
     } {
       batch.close()
+      root.close()
       writer.close()
     }
     out.toByteArray
@@ -379,7 +392,9 @@ private[sql] object ArrowConverters {
   /**
    * Convert a byte array to an ArrowRecordBatch
    */
-  private[sql] def byteArrayToBatch(batchBytes: Array[Byte], allocator: BufferAllocator): ArrowRecordBatch = {
+  private[sql] def byteArrayToBatch(
+      batchBytes: Array[Byte],
+      allocator: BufferAllocator): ArrowRecordBatch = {
     val in = new ByteArrayReadableSeekableByteChannel(batchBytes)
     val reader = new ArrowFileReader(in, allocator)
     val root = reader.getVectorSchemaRoot
