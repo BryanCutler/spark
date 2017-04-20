@@ -31,7 +31,7 @@ import org.apache.arrow.vector.file._
 import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
 import org.apache.arrow.vector.stream.{ArrowStreamReader, ArrowStreamWriter}
 import org.apache.arrow.vector.types.{DateUnit, FloatingPointPrecision, TimeUnit}
-import org.apache.arrow.vector.types.pojo.{FieldType, ArrowType, Field, Schema}
+import org.apache.arrow.vector.types.pojo.{ArrowType, Field, FieldType, Schema}
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
@@ -149,7 +149,7 @@ private[sql] object ArrowConverters {
   /**
    * Map a Spark Dataset type to ArrowType.
    */
-  private def sparkTypeToArrowType(dataType: DataType): ArrowType = {
+  private[sql] def sparkTypeToArrowType(dataType: DataType): ArrowType = {
     dataType match {
       case BooleanType => ArrowType.Bool.INSTANCE
       case ShortType => new ArrowType.Int(8 * ShortType.defaultSize, true)
@@ -512,10 +512,11 @@ private[sql] trait ColumnWriter {
 /**
  * Base class for flat arrow column writer, i.e., column without children.
  */
-private[sql] abstract class PrimitiveColumnWriter(
-  val ordinal: Int,
-  val allocator: BaseAllocator)
-    extends ColumnWriter {
+private[sql] abstract class PrimitiveColumnWriter(val ordinal: Int, val allocator: BaseAllocator)
+  extends ColumnWriter {
+
+  def getFieldType(arrowType: ArrowType): FieldType = FieldType.nullable(arrowType)
+
   def valueVector: BaseDataValueVector
   def valueMutator: BaseMutator
 
@@ -548,23 +549,21 @@ private[sql] abstract class PrimitiveColumnWriter(
   }
 }
 
-private[sql] class BooleanColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
-  private def bool2int(b: Boolean): Int = if (b) 1 else 0
-
+private[sql] class BooleanColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableBitVector
-    = new NullableBitVector("BooleanValue", FieldType.nullable(ArrowType.Bool.INSTANCE), allocator)
+    = new NullableBitVector("BooleanValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableBitVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow): Unit
-    = valueMutator.setSafe(count, bool2int(row.getBoolean(ordinal)))
+    = valueMutator.setSafe(count, if (row.getBoolean(ordinal)) 1 else 0 )
 }
 
-private[sql] class ShortColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class ShortColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableSmallIntVector
-    = new NullableSmallIntVector("ShortValue", FieldType.nullable(new ArrowType.Int(8 * ShortType.defaultSize, true)), allocator)
+    = new NullableSmallIntVector("ShortValue", getFieldType(arrowType: ArrowType), allocator)
   override val valueMutator: NullableSmallIntVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -572,10 +571,10 @@ private[sql] class ShortColumnWriter(ordinal: Int, allocator: BaseAllocator)
     = valueMutator.setSafe(count, row.getShort(ordinal))
 }
 
-private[sql] class IntegerColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class IntegerColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableIntVector
-    = new NullableIntVector("IntValue", FieldType.nullable(new ArrowType.Int(8 * IntegerType.defaultSize, true)), allocator)
+    = new NullableIntVector("IntValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableIntVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -583,10 +582,10 @@ private[sql] class IntegerColumnWriter(ordinal: Int, allocator: BaseAllocator)
     = valueMutator.setSafe(count, row.getInt(ordinal))
 }
 
-private[sql] class LongColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class LongColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableBigIntVector
-    = new NullableBigIntVector("LongValue", FieldType.nullable(new ArrowType.Int(8 * LongType.defaultSize, true)), allocator)
+    = new NullableBigIntVector("LongValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableBigIntVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -594,10 +593,10 @@ private[sql] class LongColumnWriter(ordinal: Int, allocator: BaseAllocator)
     = valueMutator.setSafe(count, row.getLong(ordinal))
 }
 
-private[sql] class FloatColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class FloatColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableFloat4Vector
-    = new NullableFloat4Vector("FloatValue", FieldType.nullable(new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE)), allocator)
+    = new NullableFloat4Vector("FloatValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableFloat4Vector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -605,10 +604,10 @@ private[sql] class FloatColumnWriter(ordinal: Int, allocator: BaseAllocator)
     = valueMutator.setSafe(count, row.getFloat(ordinal))
 }
 
-private[sql] class DoubleColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class DoubleColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableFloat8Vector
-    = new NullableFloat8Vector("DoubleValue", FieldType.nullable(new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE)), allocator)
+    = new NullableFloat8Vector("DoubleValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableFloat8Vector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -616,10 +615,10 @@ private[sql] class DoubleColumnWriter(ordinal: Int, allocator: BaseAllocator)
     = valueMutator.setSafe(count, row.getDouble(ordinal))
 }
 
-private[sql] class ByteColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class ByteColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableUInt1Vector
-    = new NullableUInt1Vector("ByteValue", FieldType.nullable(new ArrowType.Int(8, true)), allocator)
+    = new NullableUInt1Vector("ByteValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableUInt1Vector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -627,10 +626,13 @@ private[sql] class ByteColumnWriter(ordinal: Int, allocator: BaseAllocator)
     = valueMutator.setSafe(count, row.getByte(ordinal))
 }
 
-private[sql] class UTF8StringColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class UTF8StringColumnWriter(
+    arrowType: ArrowType,
+    ordinal: Int,
+    allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableVarBinaryVector
-    = new NullableVarBinaryVector("UTF8StringValue", FieldType.nullable(ArrowType.Utf8.INSTANCE), allocator)
+    = new NullableVarBinaryVector("UTF8StringValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableVarBinaryVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -640,10 +642,10 @@ private[sql] class UTF8StringColumnWriter(ordinal: Int, allocator: BaseAllocator
   }
 }
 
-private[sql] class BinaryColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class BinaryColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableVarBinaryVector
-    = new NullableVarBinaryVector("BinaryValue", FieldType.nullable(ArrowType.Binary.INSTANCE), allocator)
+    = new NullableVarBinaryVector("BinaryValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableVarBinaryVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -653,10 +655,10 @@ private[sql] class BinaryColumnWriter(ordinal: Int, allocator: BaseAllocator)
   }
 }
 
-private[sql] class DateColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class DateColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableDateVector
-    = new NullableDateVector("DateValue", FieldType.nullable(new ArrowType.Date(DateUnit.MILLISECOND)), allocator)
+    = new NullableDateVector("DateValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableDateVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -666,10 +668,13 @@ private[sql] class DateColumnWriter(ordinal: Int, allocator: BaseAllocator)
   }
 }
 
-private[sql] class TimeStampColumnWriter(ordinal: Int, allocator: BaseAllocator)
-    extends PrimitiveColumnWriter(ordinal, allocator) {
+private[sql] class TimeStampColumnWriter(
+    arrowType: ArrowType,
+    ordinal: Int,
+    allocator: BaseAllocator)
+  extends PrimitiveColumnWriter(ordinal, allocator) {
   override val valueVector: NullableTimeStampMicroVector
-    = new NullableTimeStampMicroVector("TimeStampValue", FieldType.nullable(new ArrowType.Timestamp(TimeUnit.MILLISECOND, null)), allocator)
+    = new NullableTimeStampMicroVector("TimeStampValue", getFieldType(arrowType), allocator)
   override val valueMutator: NullableTimeStampMicroVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
@@ -680,18 +685,19 @@ private[sql] class TimeStampColumnWriter(ordinal: Int, allocator: BaseAllocator)
 
 private[sql] object ColumnWriter {
   def apply(ordinal: Int, allocator: BaseAllocator, dataType: DataType): ColumnWriter = {
+    val arrowType = ArrowConverters.sparkTypeToArrowType(dataType)
     dataType match {
-      case BooleanType => new BooleanColumnWriter(ordinal, allocator)
-      case ShortType => new ShortColumnWriter(ordinal, allocator)
-      case IntegerType => new IntegerColumnWriter(ordinal, allocator)
-      case LongType => new LongColumnWriter(ordinal, allocator)
-      case FloatType => new FloatColumnWriter(ordinal, allocator)
-      case DoubleType => new DoubleColumnWriter(ordinal, allocator)
-      case ByteType => new ByteColumnWriter(ordinal, allocator)
-      case StringType => new UTF8StringColumnWriter(ordinal, allocator)
-      case BinaryType => new BinaryColumnWriter(ordinal, allocator)
-      case DateType => new DateColumnWriter(ordinal, allocator)
-      case TimestampType => new TimeStampColumnWriter(ordinal, allocator)
+      case BooleanType => new BooleanColumnWriter(arrowType, ordinal, allocator)
+      case ShortType => new ShortColumnWriter(arrowType, ordinal, allocator)
+      case IntegerType => new IntegerColumnWriter(arrowType, ordinal, allocator)
+      case LongType => new LongColumnWriter(arrowType, ordinal, allocator)
+      case FloatType => new FloatColumnWriter(arrowType, ordinal, allocator)
+      case DoubleType => new DoubleColumnWriter(arrowType, ordinal, allocator)
+      case ByteType => new ByteColumnWriter(arrowType, ordinal, allocator)
+      case StringType => new UTF8StringColumnWriter(arrowType, ordinal, allocator)
+      case BinaryType => new BinaryColumnWriter(arrowType, ordinal, allocator)
+      case DateType => new DateColumnWriter(arrowType, ordinal, allocator)
+      case TimestampType => new TimeStampColumnWriter(arrowType, ordinal, allocator)
       case _ => throw new UnsupportedOperationException(s"Unsupported data type: $dataType")
     }
   }
