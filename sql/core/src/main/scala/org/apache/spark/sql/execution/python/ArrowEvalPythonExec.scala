@@ -98,10 +98,10 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
       }
 
       val dataWriteBlock = (out: DataOutputStream) => {
-        ArrowConverters.writeRowsAsPayloads(projectedRowIter, schema, out)
+        ArrowConverters.writeRowsAsArrow(projectedRowIter, schema, out)
       }
       val dataReadBlock = (in: DataInputStream) => {
-        ArrowConverters.readPayloadsAsRows(in)
+        ArrowConverters.readArrowAsRows(in)
       }
 
       val context = TaskContext.get()

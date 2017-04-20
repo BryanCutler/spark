@@ -149,7 +149,7 @@ private[sql] object ArrowConverters {
   /**
    * Map a Spark Dataset type to ArrowType.
    */
-  private[sql] def sparkTypeToArrowType(dataType: DataType): ArrowType = {
+  private def sparkTypeToArrowType(dataType: DataType): ArrowType = {
     dataType match {
       case BooleanType => ArrowType.Bool.INSTANCE
       case ShortType => new ArrowType.Int(8 * ShortType.defaultSize, true)
@@ -223,7 +223,7 @@ private[sql] object ArrowConverters {
     allocator.close()
   }
 
-  private[sql] def writeRowsAsPayloads(rowIter: Iterator[InternalRow], schema: StructType, out: DataOutputStream): Unit = {
+  private[sql] def writeRowsAsArrow(rowIter: Iterator[InternalRow], schema: StructType, out: DataOutputStream): Unit = {
     val allocator = new RootAllocator(Long.MaxValue)
     val arrowSchema = ArrowConverters.schemaToArrowSchema(schema)
     val root = VectorSchemaRoot.create(arrowSchema, allocator)
@@ -242,7 +242,7 @@ private[sql] object ArrowConverters {
     allocator.close()
   }
 
-  private[sql] def readPayloadsAsRows(in: DataInputStream): Iterator[InternalRow] = {
+  private[sql] def readArrowAsRows(in: DataInputStream): Iterator[InternalRow] = {
     new Iterator[InternalRow] {
       val _allocator = new RootAllocator(Long.MaxValue)
       private val _reader = new ArrowStreamReader(Channels.newChannel(in), _allocator)
@@ -290,9 +290,13 @@ private[sql] object ArrowConverters {
   }
 
 
+  /**
+   * Maps Iterator from InternalRow to ArrowPayload
+   */
   private[sql] def toPayloadIterator(rowIter: Iterator[InternalRow],
                                      schema: StructType): Iterator[ArrowPayload] = {
     new Iterator[ArrowPayload] {
+      private val _allocator = new RootAllocator(Long.MaxValue)
       private var _nextPayload = convert()
 
       override def hasNext: Boolean = _nextPayload != null
@@ -300,15 +304,19 @@ private[sql] object ArrowConverters {
       override def next(): ArrowPayload = {
         val obj = _nextPayload
         if (hasNext) {
-          _nextPayload = if (rowIter.hasNext) convert() else null
+          if (rowIter.hasNext) {
+            _nextPayload = convert()
+          } else {
+            _allocator.close()
+            _nextPayload = null
+          }
         }
         obj
       }
 
       private def convert(): ArrowPayload = {
-        val allocator = new RootAllocator(Long.MaxValue)
-        val batch = internalRowIterToArrowBatch(rowIter, schema, allocator)
-        new ArrowPayload(batch, schema, allocator)
+        val batch = internalRowIterToArrowBatch(rowIter, schema, _allocator)
+        new ArrowPayload(batch, schema, _allocator)
       }
     }
   }
