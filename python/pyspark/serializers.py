@@ -212,19 +212,13 @@ class ArrowStreamSerializer(Serializer):
 
     def dump_stream(self, iterator, stream):
         import pyarrow as pa
-        import io
-        #import asdb; asdb.set_trace()
-        #sink = io.open(stream, mode='w', closefd=False)
-        sink = io.BytesIO()  # TODO: try something else to wrap stream
         writer = None
         for batch in iterator:
             if writer is None:
-                writer = pa.StreamWriter(sink, batch.schema)
+                writer = pa.StreamWriter(stream, batch.schema)
             writer.write_batch(batch)
         if writer is not None:
             writer.close()
-            #write_int(1, stream)  # signal start of stream
-            stream.write(sink.getvalue())
             write_int(0, stream)  # signal end of stream
 
     def dump_stream_no_schema(self, iterator, stream):
