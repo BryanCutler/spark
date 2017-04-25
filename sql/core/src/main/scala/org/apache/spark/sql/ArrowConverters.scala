@@ -160,8 +160,8 @@ private[sql] object ArrowConverters {
       case ByteType => new ArrowType.Int(8, true)
       case StringType => ArrowType.Utf8.INSTANCE
       case BinaryType => ArrowType.Binary.INSTANCE
-      case DateType => new ArrowType.Date(DateUnit.MILLISECOND)
-      case TimestampType => new ArrowType.Timestamp(TimeUnit.MILLISECOND, null)
+      case DateType => new ArrowType.Date(DateUnit.DAY)
+      case TimestampType => new ArrowType.Timestamp(TimeUnit.MICROSECOND, null)
       case _ => throw new UnsupportedOperationException(s"Unsupported data type: $dataType")
     }
   }
@@ -657,14 +657,13 @@ private[sql] class BinaryColumnWriter(arrowType: ArrowType, ordinal: Int, alloca
 
 private[sql] class DateColumnWriter(arrowType: ArrowType, ordinal: Int, allocator: BaseAllocator)
   extends PrimitiveColumnWriter(ordinal, allocator) {
-  override val valueVector: NullableDateVector
-    = new NullableDateVector("DateValue", getFieldType(arrowType), allocator)
-  override val valueMutator: NullableDateVector#Mutator = valueVector.getMutator
+  override val valueVector: NullableDateDayVector
+    = new NullableDateDayVector("DateValue", getFieldType(arrowType), allocator)
+  override val valueMutator: NullableDateDayVector#Mutator = valueVector.getMutator
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow): Unit = {
-    // TODO: comment on diff btw value representations of date/timestamp
-    valueMutator.setSafe(count, row.getInt(ordinal).toLong * 24 * 3600 * 1000)
+    valueMutator.setSafe(count, row.getInt(ordinal))
   }
 }
 
@@ -679,7 +678,7 @@ private[sql] class TimeStampColumnWriter(
 
   override def setNull(): Unit = valueMutator.setNull(count)
   override def setValue(row: InternalRow): Unit = {
-    valueMutator.setSafe(count, row.getLong(ordinal) / 1000)
+    valueMutator.setSafe(count, row.getLong(ordinal))
   }
 }
 
