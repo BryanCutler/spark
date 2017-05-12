@@ -92,12 +92,15 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
 
       // Input iterator to Python: input rows are grouped so we send them in batches to Python.
       // For each row, add it to the queue.
-      val projectedRowIter = iter.take(2).map { inputRow =>
+      val projectedRowIter = iter.map { inputRow =>
         queue.add(inputRow.asInstanceOf[UnsafeRow])
         projection(inputRow)
       }
 
       val dataWriteBlock = (out: DataOutputStream) => {
+        /*projectedRowIter.grouped(2000).foreach { projectedRowGroup =>
+          ArrowConverters.writeRowsAsArrow(projectedRowGroup.iterator, schema, out)
+        }*/
         ArrowConverters.writeRowsAsArrow(projectedRowIter, schema, out)
       }
       val dataReadBlock = (in: DataInputStream) => {

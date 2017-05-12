@@ -30,7 +30,8 @@ from pyspark.broadcast import Broadcast, _broadcastRegistry
 from pyspark.taskcontext import TaskContext
 from pyspark.files import SparkFiles
 from pyspark.serializers import write_with_length, write_int, read_long, \
-    write_long, read_int, SpecialLengths, UTF8Deserializer, PickleSerializer, BatchedSerializer, ArrowRowSerializer
+    write_long, read_int, SpecialLengths, UTF8Deserializer, PickleSerializer, BatchedSerializer, \
+    ArrowRowSerializer, ArrowPandasSerializer
 from pyspark import shuffle
 
 pickleSer = PickleSerializer()
@@ -104,10 +105,20 @@ def read_udfs(pickleSer, infile):
         mapper_str = "lambda a: (%s)" % (", ".join(call_udf))
         mapper = eval(mapper_str, udfs)
 
-    #func = lambda _, it: map(mapper, it)
-    func = lambda _, it: it
-    #ser = BatchedSerializer(PickleSerializer(), 100)
+    #func = lambda _, it: it
+
+    #ser = ArrowPandasSerializer()
+    #func = lambda _, series_list: mapper(series_list)
+    #func = lambda _, pdf: mapper([pdf])
+    #func = lambda _, pdf: mapper([pdf.ix[:, 0]])  # not bad 1.596006
+    #func = lambda _, pdf: mapper([pdf[pdf.columns[0]]])  # ok 1.678908
+    #func = lambda _, pdf: mapper([pdf.take([0], axis=1)])
+    #func = lambda _, pdf: pdf.apply(mapper, axis=1)
+
     ser = ArrowRowSerializer()
+    #ser = BatchedSerializer(PickleSerializer(), 100)
+    func = lambda _, it: map(mapper, it)
+
     # profiling is not supported for UDF
     return func, None, ser, ser
 
@@ -174,8 +185,10 @@ def main(infile, outfile):
 
         def process():
             iterator = deserializer.load_stream(infile)
+            '''
             if isinstance(deserializer, ArrowRowSerializer):
                 pass#import asdb; asdb.set_trace()
+            '''
             serializer.dump_stream(func(split_index, iterator), outfile)
 
         if profiler:

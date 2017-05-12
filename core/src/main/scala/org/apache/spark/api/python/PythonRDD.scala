@@ -152,6 +152,7 @@ private[spark] class PythonRunner(
     val dataIn = new DataInputStream(new BufferedInputStream(worker.getInputStream, bufferSize))
 
     val stdoutIterator = new Iterator[U] {
+      checkForErrors(dataIn.readInt())
       val _dataIterator = dataReadBlock(dataIn)
 
       override def next(): U = {
