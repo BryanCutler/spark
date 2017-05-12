@@ -115,9 +115,10 @@ def read_udfs(pickleSer, infile):
     #func = lambda _, pdf: mapper([pdf.take([0], axis=1)])
     #func = lambda _, pdf: pdf.apply(mapper, axis=1)
 
-    ser = ArrowRowSerializer()
+    ser = ArrowRowSerializer(use_size_hint=True)
+    func = lambda _, it_row_series: (mapper(row_series) for row_series in it_row_series)
     #ser = BatchedSerializer(PickleSerializer(), 100)
-    func = lambda _, it: map(mapper, it)
+    #func = lambda _, it: map(mapper, it)
 
     # profiling is not supported for UDF
     return func, None, ser, ser

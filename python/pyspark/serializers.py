@@ -243,8 +243,9 @@ class ArrowStreamSerializer(Serializer):
 
 class ArrowRowSerializer(ArrowStreamSerializer):
 
-    def __init__(self):
+    def __init__(self, use_size_hint=True):
         super(ArrowRowSerializer, self).__init__(load_to_single_batch=True)
+        self.size_hint = 0 if use_size_hint else None
 
     def dump_stream(self, iterator, stream):
         import pyarrow as pa
@@ -258,16 +259,34 @@ class ArrowRowSerializer(ArrowStreamSerializer):
             cols = [[]]
         names = ['_' + str(i) for i in range(len(cols))]
 
-        # fast assignment for single column
-        if len(cols) == 1:
-            cols[0].append(head)
-            cols[0].extend(it)
+        if self.size_hint is not None:
+            import numpy as np
+            # fast assignment for single column
+            if len(cols) == 1:
+                for i in range(len(cols)):
+                    cols[i] = np.zeros(self.size_hint, dtype=type(head))
+                cols[0][0] = head
+                for r in range(1, self.size_hint):
+                    cols[0][r] = next(it)
+            else:
+                for i in range(len(cols)):
+                    cols[i] = np.zeros(self.size_hint, dtype=type(head[i]))
+                for i in range(len(head)):
+                    cols[i][0] = head[i]
+                for r, row in enumerate(iterator):
+                    for i in range(len(row)):
+                        cols[i][r] = row[i]
         else:
-            for i in range(len(head)):
-                cols[i].append(head[i])
-            for row in iterator:
-                for i in range(len(row)):
-                    cols[i].append(row[i])
+            # fast assignment for single column
+            if len(cols) == 1:
+                cols[0].append(head)
+                cols[0].extend(it)
+            else:
+                for i in range(len(head)):
+                    cols[i].append(head[i])
+                for row in iterator:
+                    for i in range(len(row)):
+                        cols[i].append(row[i])
 
         arrs = [pa.array(cols[c]) for c in range(len(cols))]
         batch = pa.RecordBatch.from_arrays(arrs, names)
@@ -277,9 +296,12 @@ class ArrowRowSerializer(ArrowStreamSerializer):
         #self._load_to_single = False
         #import asdb; asdb.set_trace()
         table = super(ArrowRowSerializer, self).load_stream(stream)[0]
+        if self.size_hint is not None:
+            self.size_hint = table.num_rows
         pdf = table.to_pandas()
-        return (row_series[1].tolist() for row_series in pdf.iterrows())
-
+        #return (row_series[1].tolist() for row_series in pdf.iterrows())
+        #return (row_series[1] for row_series in pdf.iterrows())  # iterrows slow
+        return (pdf.ix[r, :] for r in xrange(table.num_rows))
     def __repr__(self):
         return "ArrowRowSerializer"
 
@@ -292,6 +314,7 @@ class ArrowPandasSerializer(ArrowStreamSerializer):
     # dumps a Pandas Series to stream
     def dump_stream(self, iterator, stream):
         import pyarrow as pa
+        # TODO: iterator could be a tuple
         arr = pa.Array.from_pandas(iterator)
         batch = pa.RecordBatch.from_arrays([arr], ["_0"])
         #batch = pa.RecordBatch.from_pandas(iterator)

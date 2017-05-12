@@ -152,21 +152,26 @@ private[spark] class PythonRunner(
     val dataIn = new DataInputStream(new BufferedInputStream(worker.getInputStream, bufferSize))
 
     val stdoutIterator = new Iterator[U] {
-      checkForErrors(dataIn.readInt())
+
+      // Check for initial errors
+      readCodeFromPython()
+
+      // Create iterator for reading data blocks
       val _dataIterator = dataReadBlock(dataIn)
 
       override def next(): U = {
+
+        // Check for error in writer thread, allow to throw exception
+        checkForWriterError()
+
         try {
-          //checkForErrors(dataIn.readInt())
-          checkForErrors(0)
           val nextObj = _dataIterator.next()
 
           // No more data, read footer
           if (!_dataIterator.hasNext) {
-
             // We've finished the data section of the output, but we can still
             // read some accumulator updates:
-            val numAccumulatorUpdates = checkForErrors(dataIn.readInt())
+            val numAccumulatorUpdates = readCodeFromPython()
             (1 to numAccumulatorUpdates).foreach { _ =>
               val updateLen = dataIn.readInt()
               val update = new Array[Byte](updateLen)
@@ -175,7 +180,7 @@ private[spark] class PythonRunner(
             }
 
             // Timing data from worker
-            checkForErrors(dataIn.readInt())
+            readCodeFromPython()
             val bootTime = dataIn.readLong()
             val initTime = dataIn.readLong()
             val finishTime = dataIn.readLong()
@@ -191,7 +196,7 @@ private[spark] class PythonRunner(
             context.taskMetrics.incDiskBytesSpilled(diskBytesSpilled)
 
             // Check whether the worker is ready to be re-used.
-            if (checkForErrors(dataIn.readInt()) == SpecialLengths.END_OF_STREAM) {
+            if (readCodeFromPython() == SpecialLengths.END_OF_STREAM) {
               if (reuse_worker) {
                 env.releasePythonWorker(pythonExec, envVars.asScala.toMap, worker)
                 released = true
@@ -218,20 +223,19 @@ private[spark] class PythonRunner(
 
           case eof: EOFException =>
             throw new SparkException("Python worker exited unexpectedly (crashed)", eof)
-
-          /*case e: java.lang.IllegalArgumentException =>
-            checkForErrors(SpecialLengths.PYTHON_EXCEPTION_THROWN)
-            throw new SparkException("blah blah", e)*/
         }
       }
 
       override def hasNext: Boolean = _dataIterator.hasNext
 
-      private def checkForErrors(block: => Int): Int = {
+      private def checkForWriterError(): Unit = {
         if (writerThread.exception.isDefined) {
           throw writerThread.exception.get
         }
-        val length = block
+      }
+
+      private def readCodeFromPython(): Int = {
+        val length = dataIn.readInt()
         if (length == SpecialLengths.PYTHON_EXCEPTION_THROWN) {
           // Signals that an exception has been thrown in python
           val exLength = dataIn.readInt()
