@@ -1635,8 +1635,8 @@ class DataFrame(object):
         """
         with SCCallSiteSync(self._sc) as css:
             port = self._jdf.collectAsArrowToPython()
-        #table = list(_load_from_socket(port, ArrowStreamSerializer(load_to_single_batch=True)))[0]
 
+        #table = _load_from_socket(port, ArrowStreamSerializer(load_to_single_batch=True))
         import pyarrow as pa
         tables = list(_load_from_socket(port, ArrowSerializer()))
         table = pa.concat_tables(tables)

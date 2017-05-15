@@ -197,7 +197,7 @@ class ArrowSerializer(FramedSerializer):
         return reader.read_all()
 
     def __repr__(self):
-        return "ArrowFramedSerializer"
+        return "ArrowSerializer"
 
 
 class ArrowStreamSerializer(Serializer):
@@ -212,7 +212,7 @@ class ArrowStreamSerializer(Serializer):
 
     def dump_stream(self, iterator, stream):
         import pyarrow as pa
-        write_int(0, stream)  # signal start of data block
+        write_int(1, stream)  # signal start of data block
         writer = None
         for batch in iterator:
             if writer is None:
@@ -220,12 +220,6 @@ class ArrowStreamSerializer(Serializer):
             writer.write_batch(batch)
         if writer is not None:
             writer.close()
-            #write_int(0, stream)  # signal end of stream
-
-    def dump_stream_no_schema(self, iterator, stream):
-        if self._schema is None:
-            raise RuntimeError("Arrow schema must be set first")
-        self.dump_stream_with_schema(iterator, stream, self._schema)
 
     def load_stream(self, stream):
         import pyarrow as pa
@@ -233,7 +227,7 @@ class ArrowStreamSerializer(Serializer):
         #import asdb; asdb.set_trace()
         reader = pa.StreamReader(stream)
         if self._load_to_single:
-            return [reader.read_all()]
+            return reader.read_all()
         else:
             return iter(reader)
 
@@ -252,13 +246,12 @@ class ArrowPandasSerializer(ArrowStreamSerializer):
         # TODO: iterator could be a tuple
         arr = pa.Array.from_pandas(iterator)
         batch = pa.RecordBatch.from_arrays([arr], ["_0"])
-        #batch = pa.RecordBatch.from_pandas(iterator)
         super(ArrowPandasSerializer, self).dump_stream([batch], stream)
 
     # loads stream to a list of Pandas Series
     def load_stream(self, stream):
-        table = super(ArrowPandasSerializer, self).load_stream(stream)[0]
-        return (c.to_pandas() for c in table.itercolumns())
+        table = super(ArrowPandasSerializer, self).load_stream(stream)
+        return [c.to_pandas() for c in table.itercolumns()]
 
     def __repr__(self):
         return "ArrowPandasSerializer"

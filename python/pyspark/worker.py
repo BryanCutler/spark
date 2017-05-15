@@ -105,15 +105,8 @@ def read_udfs(pickleSer, infile):
         mapper_str = "lambda a: (%s)" % (", ".join(call_udf))
         mapper = eval(mapper_str, udfs)
 
-    #func = lambda _, it: it
-
     ser = ArrowPandasSerializer()
-    func = lambda _, series_list: mapper(series_list)  # best
-    #func = lambda _, pdf: mapper([pdf])
-    #func = lambda _, pdf: mapper([pdf.ix[:, 0]])  # not bad 1.596006
-    #func = lambda _, pdf: mapper([pdf[pdf.columns[0]]])  # ok 1.678908
-    #func = lambda _, pdf: mapper([pdf.take([0], axis=1)])
-    #func = lambda _, pdf: pdf.apply(mapper, axis=1)
+    func = lambda _, series_list: mapper(series_list)  # TODO: what if not vectorizable
 
     #ser = BatchedSerializer(PickleSerializer(), 100)
     #func = lambda _, it: map(mapper, it)
