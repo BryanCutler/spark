@@ -300,8 +300,8 @@ class ArrowRowSerializer(ArrowStreamSerializer):
             self.size_hint = table.num_rows
         pdf = table.to_pandas()
         #return (row_series[1].tolist() for row_series in pdf.iterrows())
-        #return (row_series[1] for row_series in pdf.iterrows())  # iterrows slow
-        return (pdf.ix[r, :] for r in xrange(table.num_rows))
+        return (row_series[1] for row_series in pdf.iterrows())  # iterrows slow
+
     def __repr__(self):
         return "ArrowRowSerializer"
 
