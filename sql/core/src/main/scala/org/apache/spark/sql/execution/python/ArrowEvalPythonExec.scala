@@ -17,9 +17,9 @@
 
 package org.apache.spark.sql.execution.python
 
-import java.io.{DataInputStream, DataOutputStream, File}
+import java.io.{DataOutputStream, File}
 
-import org.apache.spark.api.python.{ChainedPythonFunctions, PythonRunner}
+import org.apache.spark.api.python.{PythonReadInterface, ChainedPythonFunctions, PythonRunner}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.ArrowConverters
 import org.apache.spark.sql.catalyst.InternalRow
@@ -98,20 +98,37 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
       }
 
       val dataWriteBlock = (out: DataOutputStream) => {
-        /*projectedRowIter.grouped(2000).foreach { projectedRowGroup =>
-          ArrowConverters.writeRowsAsArrow(projectedRowGroup.iterator, schema, out)
-        }*/
         ArrowConverters.writeRowsAsArrow(projectedRowIter, schema, out)
       }
-      val dataReadBlock = (in: DataInputStream) => {
-        ArrowConverters.readArrowAsRows(in)
+
+      val dataReadBuilder = (in: PythonReadInterface) => {
+        new Iterator[InternalRow] {
+
+          // Check for initial error
+          in.readLengthFromPython()
+
+          val iter = ArrowConverters.readArrowAsRows(in.getDataStream)
+
+          override def hasNext: Boolean = {
+            val result = iter.hasNext
+            if (!result) {
+              in.readLengthFromPython()  // == SpecialLengths.TIMING_DATA, marks end of data
+              in.readFooter()
+            }
+            result
+          }
+
+          override def next(): InternalRow = {
+            iter.next()
+          }
+        }
       }
 
       val context = TaskContext.get()
 
       // Output iterator for results from Python.
       val outputIterator = new PythonRunner(pyFuncs, bufferSize, reuseWorker, true, argOffsets)
-        .process(dataWriteBlock, dataReadBlock, context.partitionId(), context)
+        .process(dataWriteBlock, dataReadBuilder, context.partitionId(), context)
 
       val joined = new JoinedRow
       val resultProj = UnsafeProjection.create(output, output)

@@ -89,8 +89,8 @@ private[sql] object ArrowConverters {
    * Maps Iterator from InternalRow to ArrowPayload
    */
   private[sql] def toPayloadIterator(
-                                      rowIter: Iterator[InternalRow],
-                                      schema: StructType): Iterator[ArrowPayload] = {
+      rowIter: Iterator[InternalRow],
+      schema: StructType): Iterator[ArrowPayload] = {
     new Iterator[ArrowPayload] {
       private val _allocator = new RootAllocator(Long.MaxValue)
       private var _nextPayload = if (rowIter.nonEmpty) convert() else null
@@ -121,9 +121,9 @@ private[sql] object ArrowConverters {
    * Iterate over InternalRows and write to an ArrowRecordBatch.
    */
   private def internalRowIterToArrowBatch(
-                                           rowIter: Iterator[InternalRow],
-                                           schema: StructType,
-                                           allocator: BufferAllocator): ArrowRecordBatch = {
+      rowIter: Iterator[InternalRow],
+      schema: StructType,
+      allocator: BufferAllocator): ArrowRecordBatch = {
 
     val columnWriters = schema.fields.zipWithIndex.map { case (field, ordinal) =>
       ColumnWriter(ordinal, allocator, field.dataType).init()
@@ -154,9 +154,9 @@ private[sql] object ArrowConverters {
    * Convert an ArrowRecordBatch to a byte array and close batch
    */
   private[sql] def batchToByteArray(
-                                       batch: ArrowRecordBatch,
-                                       schema: StructType,
-                                       allocator: BufferAllocator): Array[Byte] = {
+      batch: ArrowRecordBatch,
+      schema: StructType,
+      allocator: BufferAllocator): Array[Byte] = {
     val arrowSchema = ArrowConverters.schemaToArrowSchema(schema)
     val root = VectorSchemaRoot.create(arrowSchema, allocator)
     val out = new ByteArrayOutputStream()
@@ -179,8 +179,8 @@ private[sql] object ArrowConverters {
    * Convert a byte array to an ArrowRecordBatch
    */
   private[sql] def byteArrayToBatch(
-                                       batchBytes: Array[Byte],
-                                       allocator: BufferAllocator): ArrowRecordBatch = {
+      batchBytes: Array[Byte],
+      allocator: BufferAllocator): ArrowRecordBatch = {
     val in = new ByteArrayReadableSeekableByteChannel(batchBytes)
     val reader = new ArrowFileReader(in, allocator)
     val root = reader.getVectorSchemaRoot
