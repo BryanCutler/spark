@@ -41,7 +41,7 @@ else:
 
 from pyspark.serializers import NoOpSerializer, CartesianDeserializer, \
     BatchedSerializer, CloudPickleSerializer, PairDeserializer, \
-    PickleSerializer, pack_long, AutoBatchedSerializer
+    PickleSerializer, pack_long, AutoBatchedSerializer, ArrowPandasSerializer
 from pyspark.join import python_join, python_left_outer_join, \
     python_right_outer_join, python_full_outer_join, python_cogroup
 from pyspark.statcounter import StatCounter
@@ -2469,6 +2469,40 @@ class PipelinedRDD(RDD):
 
     def _is_pipelinable(self):
         return not (self.is_cached or self.is_checkpointed)
+
+
+class ArrowRDD(object):
+    """
+    Wraps a Python RDD to deserialize using Arrow into ``pandas.DataFrame`` for processing.
+    """
+
+    def __init__(self, jrdd, ctx, pipelined_rdd=None):
+        if pipelined_rdd is None:
+            self._rdd = RDD(jrdd, ctx, jrdd_deserializer=ArrowPandasSerializer())
+        else:
+            self._rdd = pipelined_rdd
+
+    def _wrap_rdd(self, rdd):
+        rdd._jrdd_deserializer = self._rdd._jrdd_deserializer
+        return ArrowRDD(jrdd=None, ctx=None, pipelined_rdd=rdd)
+
+    def mapPartitions(self, f, preservesPartitioning=False):
+        rdd = self._rdd.mapPartitions(f, preservesPartitioning=preservesPartitioning)
+        return self._wrap_rdd(rdd)
+
+    def map(self, f, preservesPartitioning=False):
+        rdd = self._rdd.map(f, preservesPartitioning=preservesPartitioning)
+        return self._wrap_rdd(rdd)
+
+    def reduce(self, f):
+        return self._rdd.reduce(f)
+
+    def count(self):
+        return self._rdd.count()
+
+    def collect(self):
+        return self._rdd.collect()
+
 
 
 def _test():

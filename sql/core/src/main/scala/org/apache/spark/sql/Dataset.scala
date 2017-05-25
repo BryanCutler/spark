@@ -2873,4 +2873,6 @@ class Dataset[T] private[sql](
       ArrowConverters.toPayloadIterator(iter, schema_captured, maxRecordsPerBatch)
     }
   }
+
+  private[sql] def toArrowPayloadBytes: RDD[Array[Byte]] = toArrowPayload.map(_.toByteArray)
 }

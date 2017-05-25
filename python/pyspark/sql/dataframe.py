@@ -28,7 +28,7 @@ else:
 import warnings
 
 from pyspark import copy_func, since
-from pyspark.rdd import RDD, _load_from_socket, ignore_unicode_prefix
+from pyspark.rdd import RDD, ArrowRDD, _load_from_socket, ignore_unicode_prefix
 from pyspark.serializers import ArrowSerializer, BatchedSerializer, PickleSerializer, \
     UTF8Deserializer
 from pyspark.storagelevel import StorageLevel
@@ -1674,6 +1674,19 @@ class DataFrame(object):
         with SCCallSiteSync(self._sc) as css:
             port = self._jdf.collectAsArrowToPython()
         return list(_load_from_socket(port, ArrowSerializer()))
+
+    def mapPartitionsAsPandas(self, f):
+        """
+        Return an Arrow RDD with function applied to a ``pandas.DataFrame`` at each partition.
+        """
+        def f_process_pandas(pdf_iter):
+            for pdf in pdf_iter:
+                yield f(pdf)
+
+        payload_jrdd = self._jdf.toArrowPayloadBytes().toJavaRDD()
+        rdd = ArrowRDD(payload_jrdd, self._sc)
+        return rdd.mapPartitions(f_process_pandas)
+
 
     ##########################################################################################
     # Pandas compatibility

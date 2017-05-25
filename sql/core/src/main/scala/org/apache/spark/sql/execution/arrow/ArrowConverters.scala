@@ -21,7 +21,6 @@ import java.io.ByteArrayOutputStream
 import java.nio.channels.Channels
 
 import scala.collection.JavaConverters._
-
 import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.{BufferAllocator, RootAllocator}
 import org.apache.arrow.vector._
@@ -31,8 +30,10 @@ import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
 import org.apache.arrow.vector.types.FloatingPointPrecision
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, FieldType, Schema}
 import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
-
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
@@ -163,6 +164,7 @@ private[sql] object ArrowConverters {
     buffers.foreach(_.release())
     recordBatch
   }
+
 
   /**
    * Convert an ArrowRecordBatch to a byte array and close batch to release resources. Once closed,
