@@ -21,7 +21,6 @@ import java.io.ByteArrayOutputStream
 import java.nio.channels.Channels
 
 import scala.collection.JavaConverters._
-
 import io.netty.buffer.ArrowBuf
 import org.apache.arrow.memory.{BufferAllocator, RootAllocator}
 import org.apache.arrow.vector._
@@ -31,8 +30,8 @@ import org.apache.arrow.vector.schema.{ArrowFieldNode, ArrowRecordBatch}
 import org.apache.arrow.vector.types.FloatingPointPrecision
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, FieldType, Schema}
 import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
-
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
@@ -66,6 +65,8 @@ private[sql] object ArrowPayload {
       allocator: BufferAllocator): ArrowPayload = {
     new ArrowPayload(ArrowConverters.batchToByteArray(batch, schema, allocator))
   }
+
+  def apply(batchBytes: Array[Byte]): ArrowPayload = new ArrowPayload(batchBytes)
 }
 
 private[sql] object ArrowConverters {
@@ -128,6 +129,61 @@ private[sql] object ArrowConverters {
       private def convert(): ArrowPayload = {
         val batch = internalRowIterToArrowBatch(rowIter, schema, _allocator, maxRecordsPerBatch)
         ArrowPayload(batch, schema, _allocator)
+      }
+    }
+  }
+
+  private[sql] def fromPayloadIterator(iter: Iterator[ArrowPayload]): Iterator[InternalRow] = {
+    new Iterator[InternalRow] {
+      private val _allocator = new RootAllocator(Long.MaxValue)
+      private var _reader: ArrowFileReader = _
+      private var _root: VectorSchemaRoot = _
+      private var _index = 0
+
+      loadNextBatch()
+
+      override def hasNext: Boolean = _root != null && _index < _root.getRowCount
+
+      override def next(): InternalRow = {
+        val fields = _root.getFieldVectors.asScala
+
+        val genericRowData = fields.map { field =>
+          field.getAccessor.getObject(_index)
+        }.toArray[Any]
+
+        _index += 1
+        if (_index >= _root.getRowCount) {
+          _index = 0
+          loadNextBatch()
+          if (!hasNext) {
+            close()
+          }
+        }
+
+        new GenericInternalRow(genericRowData)
+      }
+
+      def close(): Unit = {
+        closeReader()
+        _allocator.close()
+      }
+
+      private def closeReader(): Unit = {
+        if (_reader != null) {
+          _reader.close()
+          _reader = null
+          _root = null
+        }
+      }
+
+      private def loadNextBatch(): Unit = {
+        closeReader()
+        if (iter.hasNext) {
+          val in = new ByteArrayReadableSeekableByteChannel(iter.next().asPythonSerializable)
+          _reader = new ArrowFileReader(in, _allocator)
+          _root = _reader.getVectorSchemaRoot // throws IOException
+          _reader.loadNextBatch() // throws IOException
+        }
       }
     }
   }
@@ -211,6 +267,22 @@ private[sql] object ArrowConverters {
       val unloader = new VectorUnloader(root)
       reader.loadNextBatch()  // throws IOException
       unloader.getRecordBatch
+    } {
+      reader.close()
+    }
+  }
+
+  private[arrow] def execByteArrayAsVectors(
+     batchBytes: Array[Byte],
+     allocator: BufferAllocator)(block: (VectorSchemaRoot) => Unit): Unit = {
+    val in = new ByteArrayReadableSeekableByteChannel(batchBytes)
+    val reader = new ArrowFileReader(in, allocator)
+
+    // Read a batch from a byte stream, ensure the reader is closed
+    Utils.tryWithSafeFinally {
+      val root = reader.getVectorSchemaRoot  // throws IOException
+      reader.loadNextBatch()  // throws IOException
+      block(root)
     } {
       reader.close()
     }
