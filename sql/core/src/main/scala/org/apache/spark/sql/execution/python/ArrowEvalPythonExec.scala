@@ -85,7 +85,9 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
         }.toArray
       }.toArray
       val projection = newMutableProjection(allInputs, child.output)
-      val schema = StructType(dataTypes.map(dt => StructField("_", dt)))
+      val schema = StructType(dataTypes.zipWithIndex.map { case (dt, i) =>
+        StructField(s"_$i", dt)
+      })
 
       // Input iterator to Python: input rows are grouped so we send them in batches to Python.
       // For each row, add it to the queue.
