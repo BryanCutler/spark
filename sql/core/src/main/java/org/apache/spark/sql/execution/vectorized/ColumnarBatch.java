@@ -65,15 +65,42 @@ public final class ColumnarBatch {
   final Row row;
 
   public static ColumnarBatch allocate(StructType schema, MemoryMode memMode) {
-    return new ColumnarBatch(schema, DEFAULT_BATCH_SIZE, memMode);
+    return allocate(schema, memMode, DEFAULT_BATCH_SIZE);
   }
 
   public static ColumnarBatch allocate(StructType type) {
-    return new ColumnarBatch(type, DEFAULT_BATCH_SIZE, DEFAULT_MEMORY_MODE);
+    return allocate(type, DEFAULT_MEMORY_MODE, DEFAULT_BATCH_SIZE);
   }
 
   public static ColumnarBatch allocate(StructType schema, MemoryMode memMode, int maxRows) {
-    return new ColumnarBatch(schema, maxRows, memMode);
+    ColumnVector[] columns = allocateVectors(schema, maxRows, memMode);
+    return create(schema, columns, maxRows);
+  }
+
+  private static ColumnVector[] allocateVectors(StructType schema, int maxRows, MemoryMode memMode) {
+    ColumnVector[] columns = new ColumnVector[schema.size()];
+    for (int i = 0; i < schema.fields().length; ++i) {
+      StructField field = schema.fields()[i];
+      columns[i] = ColumnVector.allocate(maxRows, field.dataType(), memMode);
+    }
+    return columns;
+  }
+
+  public static ColumnarBatch createReadOnly(
+      StructType schema,
+      ReadOnlyColumnVector[] columns,
+      int numRows) {
+    for (ReadOnlyColumnVector c: columns) {
+      assert(c.capacity >= numRows);
+    }
+    ColumnarBatch batch = create(schema, columns, numRows);
+    batch.setNumRows(numRows);
+    return batch;
+  }
+
+  private static ColumnarBatch create(StructType schema, ColumnVector[] columns, int capacity) {
+    assert(schema.length() == columns.length);
+    return new ColumnarBatch(schema, columns, capacity);
   }
 
   /**
@@ -505,18 +532,12 @@ public final class ColumnarBatch {
     nullFilteredColumns.add(ordinal);
   }
 
-  private ColumnarBatch(StructType schema, int maxRows, MemoryMode memMode) {
+  private ColumnarBatch(StructType schema, ColumnVector[] columns, int capacity) {
     this.schema = schema;
-    this.capacity = maxRows;
-    this.columns = new ColumnVector[schema.size()];
+    this.columns = columns;
+    this.capacity = capacity;
     this.nullFilteredColumns = new HashSet<>();
-    this.filteredRows = new boolean[maxRows];
-
-    for (int i = 0; i < schema.fields().length; ++i) {
-      StructField field = schema.fields()[i];
-      columns[i] = ColumnVector.allocate(maxRows, field.dataType(), memMode);
-    }
-
+    this.filteredRows = new boolean[this.capacity];
     this.row = new Row(this);
   }
 }
