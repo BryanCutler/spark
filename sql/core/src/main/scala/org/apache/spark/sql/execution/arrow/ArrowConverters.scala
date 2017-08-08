@@ -30,7 +30,6 @@ import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
 
 import org.apache.spark.TaskContext
 import org.apache.spark.api.java.JavaRDD
-import org.apache.spark.api.python.PythonRDD
 import org.apache.spark.sql.{DataFrame, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.vectorized.{ArrowColumnVector, ColumnarBatch, ReadOnlyColumnVector}
@@ -206,4 +205,24 @@ private[sql] object ArrowConverters {
 
     sqlContext.internalCreateDataFrame(rdd, schema)
   }
+
+  /* Alternate using Accumulator
+  def toDataFrame(arrowRDD: JavaRDD[Array[Byte]], sqlContext: SQLContext): DataFrame = {
+
+    val acc = sqlContext.sparkSession.sparkContext.collectionAccumulator[String]("schema_acc")
+
+    val rdd = arrowRDD.rdd.mapPartitions { iter =>
+      val context = TaskContext.get()
+      val (it, schema) = ArrowConverters.fromPayloadIterator(iter.map(new ArrowPayload(_)), context)
+      acc.add(schema.json)
+      it
+    }
+
+    // need action to populate accumulator
+    rdd.count()
+    val schema = DataType.fromJson(acc.value.get(0)).asInstanceOf[StructType]
+
+    sqlContext.internalCreateDataFrame(rdd, schema)
+  }
+  */
 }
