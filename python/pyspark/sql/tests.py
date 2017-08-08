@@ -3059,6 +3059,38 @@ class ArrowTests(ReusedPySparkTestCase):
         self.assertEqual(pdf.columns[0], "i")
         self.assertTrue(pdf.empty)
 
+    def test_map_as_pandas(self):
+        from pyspark.arrow import ArrowDataFrame
+        df = self.spark.range(8, numPartitions=2)
+        arrow_df = ArrowDataFrame(df)
+
+        pdf_rdd = arrow_df.map(lambda pdf: pdf + 1) \
+            .map(lambda pdf: pdf * 2)
+
+        print("Collected pandas.DataFrames")
+        pdfs = pdf_rdd.collect()
+        for pdf in pdfs:
+            print(pdf)
+
+        print("Reduced pandas.DataFrame")
+        import pandas as pd
+        pdf = pdf_rdd.reduce(lambda pd1, pd2: pd.concat([pd1, pd2], ignore_index=True))
+        print(pdf)
+
+        print("Apply function for each pandas partition")
+        def foreach_partition(pdf):
+            print(pdf.describe())
+        arrow_df.map(foreach_partition).count()
+
+        '''
+        from pyspark.arrow import ArrowDataFrame
+        from pyspark.sql.functions import rand
+        df = spark.range(10, numPartitions=2).withColumn("x", rand())
+        adf = ArrowDataFrame(df)
+        rdd = adf.map(lambda pdf: pdf * 2)
+        df2 = rdd.toDF()
+        '''
+
 
 if __name__ == "__main__":
     from pyspark.sql.tests import *
