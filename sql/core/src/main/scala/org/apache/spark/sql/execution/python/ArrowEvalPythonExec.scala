@@ -114,8 +114,10 @@ case class ArrowEvalPythonExec(udfs: Seq[PythonUDF], output: Seq[Attribute], chi
       val joined = new JoinedRow
       val resultProj = UnsafeProjection.create(output, output)
 
-      val outputRowIterator = ArrowConverters.fromPayloadIterator(
-        outputIterator.map(new ArrowPayload(_)), schemaOut, context)
+      val (outputRowIterator, schemaRead) = ArrowConverters.fromPayloadIterator(
+        outputIterator.map(new ArrowPayload(_)), context)
+
+      assert(schemaOut.equals(schemaRead), s"$schemaOut \n!=\n $schemaRead")
 
       outputRowIterator.map { outputRow =>
         resultProj(joined(queue.remove(), outputRow))
