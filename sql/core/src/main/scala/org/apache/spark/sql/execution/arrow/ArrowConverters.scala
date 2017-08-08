@@ -29,7 +29,9 @@ import org.apache.arrow.vector.schema.ArrowRecordBatch
 import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
 
 import org.apache.spark.TaskContext
+import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.python.PythonRDD
+import org.apache.spark.sql.{DataFrame, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.vectorized.{ArrowColumnVector, ColumnarBatch, ReadOnlyColumnVector}
 import org.apache.spark.sql.types._
@@ -151,12 +153,11 @@ private[sql] object ArrowConverters {
       }
 
       override def hasNext: Boolean = rowIter.hasNext || {
+        closeReader()
         if (payloadIter.hasNext) {
-          closeReader()
           rowIter = nextBatch()._1
           true
         } else {
-          closeReader()
           allocator.close()
           false
         }
@@ -191,5 +192,18 @@ private[sql] object ArrowConverters {
     } {
       reader.close()
     }
+  }
+
+  def toDataFrame(arrowRDD: JavaRDD[Array[Byte]], sqlContext: SQLContext): DataFrame = {
+    val rdd = arrowRDD.rdd.mapPartitions { iter =>
+      val context = TaskContext.get()
+      ArrowConverters.fromPayloadIterator(iter.map(new ArrowPayload(_)), context)._1
+    }
+
+    // TODO: find easier way to get schema than loading first batch
+    val payloadIter = Seq(new ArrowPayload(arrowRDD.first())).toIterator
+    val schema = ArrowConverters.fromPayloadIterator(payloadIter, TaskContext.empty())._2
+
+    sqlContext.internalCreateDataFrame(rdd, schema)
   }
 }

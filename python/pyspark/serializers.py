@@ -213,17 +213,24 @@ class ArrowSerializer(FramedSerializer):
 
 class ArrowPandasSerializer(ArrowSerializer):
 
-    def __init__(self):
-        super(ArrowPandasSerializer, self).__init__()
+    SERIES_MODE = 0
+    DATAFRAME_MODE = 1
 
-    def dumps(self, series):
+    def __init__(self, mode):
+        super(ArrowPandasSerializer, self).__init__()
+        self.mode = mode
+
+    def dumps(self, obj):
         """
         Make an ArrowRecordBatch from a Pandas Series and serialize
         """
         import pyarrow as pa
-        # TODO: iterator could be a tuple
-        arr = pa.Array.from_pandas(series)
-        batch = pa.RecordBatch.from_arrays([arr], ["_0"])
+        if self.mode == self.SERIES_MODE:
+            # TODO: iterator could be a tuple
+            arr = pa.Array.from_pandas(obj)
+            batch = pa.RecordBatch.from_arrays([arr], ["_0"])
+        else:
+            batch = pa.RecordBatch.from_pandas(obj, preserve_index=False)
         return super(ArrowPandasSerializer, self).dumps(batch)
 
     def loads(self, obj):
@@ -231,7 +238,10 @@ class ArrowPandasSerializer(ArrowSerializer):
         Deserialize an ArrowRecordBatch to an Arrow table and return as a list of pandas.Series
         """
         table = super(ArrowPandasSerializer, self).loads(obj)
-        return [c.to_pandas() for c in table.itercolumns()]
+        if self.mode == self.SERIES_MODE:
+            return [c.to_pandas() for c in table.itercolumns()]
+        else:
+            return table.to_pandas()
 
     def __repr__(self):
         return "ArrowPandasSerializer"
