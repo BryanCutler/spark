@@ -80,7 +80,7 @@ class ArrowDataFrame(ArrowRDDBase):
         return self._wrap_rdd(rdd)
 
     def groupBy(self, *cols):
-        jgd = self._jdf.groupBy(self._jcols(*cols))
+        jgd = self.df._jdf.groupBy(self.df._jcols(*cols))
         return ArrowGroupedData(jgd, self.df.sql_ctx)
 
     def windowOver(self, window_spec):
