@@ -126,8 +126,8 @@ private[sql] object ArrowConverters {
     def nextBatch(): (Iterator[InternalRow], StructType) = {
       val in = new ByteArrayReadableSeekableByteChannel(payloadIter.next().asPythonSerializable)
       reader = new ArrowFileReader(in, allocator)
-      reader.loadNextBatch() // throws IOException
-      val root = reader.getVectorSchemaRoot
+      reader.loadNextBatch()  // throws IOException
+      val root = reader.getVectorSchemaRoot  // throws IOException
       val schemaRead = ArrowUtils.fromArrowSchema(root.getSchema)
 
       val columns = root.getFieldVectors.asScala.map { vector =>
@@ -144,7 +144,7 @@ private[sql] object ArrowConverters {
       (Iterator.empty, StructType(Seq.empty))
     }
 
-    (new Iterator[InternalRow] {
+    val outputIterator = new Iterator[InternalRow] {
 
       context.addTaskCompletionListener { _ =>
         closeReader()
@@ -170,7 +170,9 @@ private[sql] object ArrowConverters {
           reader = null
         }
       }
-    }, schemaRead)
+    }
+
+    (outputIterator, schemaRead)
   }
 
   /**
