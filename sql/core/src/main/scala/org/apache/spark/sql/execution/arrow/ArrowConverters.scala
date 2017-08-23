@@ -201,30 +201,18 @@ private[sql] object ArrowConverters {
       ArrowConverters.fromPayloadIterator(iter.map(new ArrowPayload(_)), context)._1
     }
 
-    // TODO: find easier way to get schema than loading first batch
-    val payloadIter = Seq(new ArrowPayload(arrowRDD.first())).toIterator
-    val schema = ArrowConverters.fromPayloadIterator(payloadIter, TaskContext.empty())._2
-
-    sqlContext.internalCreateDataFrame(rdd, schema)
-  }
-
-  /* Alternate using Accumulator
-  def toDataFrame(arrowRDD: JavaRDD[Array[Byte]], sqlContext: SQLContext): DataFrame = {
-
-    val acc = sqlContext.sparkSession.sparkContext.collectionAccumulator[String]("schema_acc")
-
-    val rdd = arrowRDD.rdd.mapPartitions { iter =>
+    val schemaList = arrowRDD.rdd.mapPartitions { iter =>
       val context = TaskContext.get()
-      val (it, schema) = ArrowConverters.fromPayloadIterator(iter.map(new ArrowPayload(_)), context)
-      acc.add(schema.json)
-      it
-    }
+      if (iter.hasNext) {
+        val first = iter.next()
+        Iterator(ArrowConverters.fromPayloadIterator(Iterator(new ArrowPayload(first)), context)._2)
+      } else {
+        Iterator.empty
+      }
+    }.collect()
 
-    // need action to populate accumulator
-    rdd.count()
-    val schema = DataType.fromJson(acc.value.get(0)).asInstanceOf[StructType]
+    val schema = if (schemaList.nonEmpty) schemaList(0) else StructType(Seq.empty)
 
     sqlContext.internalCreateDataFrame(rdd, schema)
   }
-  */
 }

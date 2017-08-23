@@ -3082,14 +3082,15 @@ class ArrowTests(ReusedPySparkTestCase):
             print(pdf.describe())
         arrow_df.map(foreach_partition).count()
 
-        '''
-        from pyspark.arrow import ArrowDataFrame
+        print("Conversion back to Spark DataFrame")
+        def with_y(pdf):
+            pdf['y'] = pdf['x'] * 2
+            return pdf
         from pyspark.sql.functions import rand
-        df = spark.range(10, numPartitions=2).withColumn("x", rand())
-        adf = ArrowDataFrame(df)
-        rdd = adf.map(lambda pdf: pdf * 2)
-        df2 = rdd.toDF()
-        '''
+        arrow_df = ArrowDataFrame(df.withColumn("x", rand()))
+        xy = arrow_df.map(with_y)
+        df2 = xy.toDF()
+        df2.show()
 
 
 if __name__ == "__main__":
