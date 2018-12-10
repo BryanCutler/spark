@@ -19,9 +19,11 @@ import pyarrow as pa
 
 from pyspark.rdd import RDD
 from pyspark.sql import DataFrame
-from pyspark.serializers import NoOpSerializer, ArrowStreamSerializer, FramedSerializer, \
-    write_int
+from pyspark.serializers import NoOpSerializer, ArrowCollectSerializer, ArrowStreamSerializer, \
+    FramedSerializer
 from pyspark.sql.types import from_arrow_schema, to_arrow_schema
+from pyspark.traceback_utils import SCCallSiteSync
+from pyspark.rdd import _load_from_socket
 
 
 @property
@@ -34,10 +36,25 @@ def as_pandas(self):
     return ArrowDataFrame(self, pandas_mode=True)
 
 
+def to_arrow_iterator(self, batch_order_fn=None):
+
+    with SCCallSiteSync(self._sc) as css:
+        sock_info = self._jdf.collectAsArrowToPython()
+
+    it = _load_from_socket(sock_info, ArrowCollectSerializer())
+    for result in it:
+        # TODO: maybe better to check if last in sequence?
+        if isinstance(result, pa.RecordBatch):
+            yield result
+        elif batch_order_fn is not None:
+            batch_order_fn(result)
+
+
 def patch_spark():
     from pyspark.sql import DataFrame
     DataFrame.as_arrow = as_arrow
     DataFrame.as_pandas = as_pandas
+    DataFrame.to_arrow_iterator = to_arrow_iterator
 
 
 def _wrap_pandas_func(f, preserve_index=False):
